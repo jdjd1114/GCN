@@ -3,8 +3,8 @@
 
 1. Install CUDA
 
-2. Download GCN
-   cd path_to_GCN/
+2. Download GCN from https://github.com/jdjd1114/GCN
+   cd path_to_GCN/
 
 3. Makefile
    make
