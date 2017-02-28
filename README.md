@@ -11,8 +11,7 @@
    make
    
 4. run the program
-   <br>`bash`
-   ./bin/gcn data/DATANAME.mat
-   <bar> Dataset consists of two parts: 
+   <br>`bash ./bin/gcn data/DATANAME.mat
+   <bar> * Dataset consists of two parts: 
    <bar> * Dataset, a 3-dimensional hyperspectal image
    <bar> * Labels, a 2-dimensional label matrix
