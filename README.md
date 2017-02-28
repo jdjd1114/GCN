@@ -12,6 +12,6 @@
    
 4. run the program
    <br>`bash` ./bin/gcn data/DATANAME.mat
-   <br> * Dataset consists of two parts: 
+   <br> Dataset consists of two parts: 
    <br> * Dataset, a 3-dimensional hyperspectal image
    <br> * Labels, a 2-dimensional label matrix
