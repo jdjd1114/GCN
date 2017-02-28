@@ -1,4 +1,4 @@
-# CUDA_CNN
+# GPU-based Cube CNN
 
 1. Install CUDA
 
