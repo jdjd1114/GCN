@@ -12,8 +12,8 @@
 using namespace std;
 
 const int KER_NUM = 20;//number of convolution kernels
-const int P_NUM = 19;//每次卷积的层数
-const int LEAP = 2;//跳数
+const int P_NUM = 19;//number of layers to be convoluted
+const int LEAP = 2;//leap size
 const int GP_NUM = 2;//number of each group of maxpooling layer
 const int NEU_NUM1 = 100;
 const int NEU_NUM2 = 13;//number of output layer neurons 
@@ -35,7 +35,8 @@ bool InitCUDA(){
 	for (i =0; i<count;i++){
 		cudaDeviceProp prop;
 		if(cudaGetDeviceProperties(&prop,i)==cudaSuccess){
-			if(prop.major>=1){                                                                                                                                      break;
+			if(prop.major>=1){     
+				break;
 			}
 		}
 	}
@@ -48,7 +49,7 @@ bool InitCUDA(){
 }
 
 
-//copy数据到shared memory
+//copy data to shared memory
 __device__ void copy_data_to_share(double * data, double data_tmp[1][MAX_MRE],int tid, int offset,int head,int length){
 	for(int i=tid*offset; i<(tid+1)*offset && (i < length); i++){
 		data_tmp[0][i] = data[i+head];
@@ -66,7 +67,7 @@ __device__ void copy_data_to_shared(double * data, double * data_tmp, int head, 
 	}
 }
 
-//GPU端负责卷积
+//forward convolutional kernel
 __global__ static void convol(int iter,int i0,double * train,double * kernel,double * re,double * bias,int z,int re_size)
 {
 /*	int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -122,7 +123,7 @@ __global__ static void convol(int iter,int i0,double * train,double * kernel,dou
 	}
 }
 
-//GPU端进行下采样
+//forward maxpooling layer
 __global__ static void maxpooling(int iter,double * re,double * mre,int * mre_index,int re_size,int mre_num){
 	/*int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int threadNum = blockDim.x * gridDim.x;
@@ -164,7 +165,7 @@ __global__ static void maxpooling(int iter,double * re,double * mre,int * mre_in
 	}
 }
 
-//全连接层,每个线程负责一个神经元输出结果的计算
+//forward fullconnect layer
 __global__ static void fullconnect(int iter,double * mre,double * omega,double * bias,double * F1,int mre_size){
 	/*int tid = blockIdx.x * blockDim.x +threadIdx.x;
 	int threadNum = blockDim.x * gridDim.x;
@@ -209,7 +210,7 @@ __global__ static void fullconnect(int iter,double * mre,double * omega,double *
 	}
 }
 
-//输出层，每个线程负责一个神经元输出结果的计算
+//forward output layer
 __global__ static void output(int iter, double * F1, double * omega2, double * bias, double * O2){
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int threadNum = blockDim.x * gridDim.x;
@@ -260,7 +261,7 @@ __global__ static void bp_output(int iter,int train_idx, double LEARN_RATE, doub
 		bias2[id] = bias2[id] - delta_L_z[id]*LEARN_RATE;
 	}
 }
-//全连接层
+//backward fullconnect layer
 __global__ static void bp_fullconnect(int iter, double LEARN_RATE, double * omega2,double * bias1, double * F1, double * delta_L_z, double *delta_f_a, double * delta_f_z)
 {
 	/*int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -309,7 +310,7 @@ __global__ static void bp_fullconnect(int iter, double LEARN_RATE, double * omeg
 		}
 	}
 }
-//maxpooling层（并将delta_a映射到卷积层的delta_z）
+//bacdward maxpooling layer
 __global__ static void bp_maxpooling(int iter, int mre_size,double LEARN_RATE, int *mre_index, double * omega1,double *mre, double * delta_f_a, double * delta_f_z, double * delta_22)
 {
 	/*int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -352,7 +353,7 @@ __global__ static void bp_maxpooling(int iter, int mre_size,double LEARN_RATE, i
 	}
 }
 
-//计算并更新kernel
+//bacdward convolutional layer
 __global__ static void bp_update_kernel(int iter,int i0, double LEARN_RATE, int z, int mre_num,int re_size, int * mre_index, double * delta_22, double * data, double * kernel,double * bias0)
 {
 	/*int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -420,7 +421,7 @@ __global__ static void bp_update_kernel(int iter,int i0, double LEARN_RATE, int 
 	}
 }
 
-//数据预处理
+
 __global__ static void processing(int iter, double * data, int * train_index, double * processed_data, int x, int y, int z, int train_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -452,7 +453,7 @@ double lossfunction(double * output, double * labels, int idx){
 }
 
 
-//计算正确率
+//calculate accuracy rate
 double count_err(double * test_labels, double * output, int test_idx)
 {
 	double right=0;
@@ -471,7 +472,7 @@ double count_err(double * test_labels, double * output, int test_idx)
 	return right;
 }
 
-//插入队列
+
 void insert_line(double * a, double b){
 	for(int i=1; i<VALID_BATCH; i++){
 		a[i-1] = a[i];
@@ -520,7 +521,7 @@ void shuffle(int * data, double * labels, int dim_row, int width){
 	}
 }
 
-//训练
+
 double training(double * data, double * labels, int x, int y, int z){
 	clock_t start, end;
 	start = clock();	
