@@ -11,17 +11,17 @@
 using namespace std;
 
 const int KER_NUM = 20;//卷积核数量
-const int P_NUM = 18;//每次卷积的层数
+const int P_NUM = 19;//每次卷积的层数
 const int LEAP = 2;//跳数
 const int GP_NUM = 2;//maxpooling每组的个数
 const int NEU_NUM1 = 100;
-const int NEU_NUM2 = 16;//输出层神经元个数
+const int NEU_NUM2 = 13;//输出层神经元个数
 const int NEIGHBOR = 8;//定义邻居个数
-double LEARN_RATE = 0.0024;
+double LEARN_RATE = 0.007;
 const double MIN_ERR = 0.001;
 const int VALID_BATCH = 5;
 const int MAX_MRE = 2000;
-const int DATA_BATCH = 100;//每次处理100个像素对应的数据
+const int DATA_BATCH = 10;//每次处理100个像素对应的数据
 //const double DECAY = 0.04;
 //CUDA初始化
 bool InitCUDA(){
