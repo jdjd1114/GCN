@@ -4,6 +4,8 @@
 
 2. Download GCN from https://github.com/jdjd1114/GCN
    <br>`bash`
+   git clone 
+   <br>`bash`
    cd path_to_GCN/
    
 3. Compile (Note that MATLAB path in Makefile may need to be modified.)
