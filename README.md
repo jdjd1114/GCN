@@ -4,7 +4,7 @@
 
 2. Download GCN from https://github.com/jdjd1114/GCN
    <br>`bash`
-   git clone 
+   git clone https://github.com/jdjd1114/GCN.git
    <br>`bash`
    cd path_to_GCN/
    
