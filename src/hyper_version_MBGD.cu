@@ -5,7 +5,6 @@
 #include <math.h>
 #include <matrix.h>
 #include <iostream>
-#include "cokus.cpp"
 #include "cuda_util.h"
 #include <cuda_runtime.h>
 using namespace std;
