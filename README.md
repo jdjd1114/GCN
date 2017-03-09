@@ -1,6 +1,6 @@
 # GPU-based Cube CNN
 
-1. Install CUDA
+1. Install CUDA and nvcc compiler
 
 2. Download GCN from https://github.com/jdjd1114/GCN
    <br>`bash`
