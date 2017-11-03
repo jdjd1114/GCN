@@ -870,7 +870,7 @@ double training(double * data, double * labels, int x, int y, int z){
 		cudaStreamCreate(&stream[i]);
 	}
 	
-	for(int j=0; j<300; j++){
+	for(int j=0; j<3; j++){
 		loss = 0;
 		for(int i0=0; i0<batch_num; i0++)
 		{
@@ -895,7 +895,7 @@ double training(double * data, double * labels, int x, int y, int z){
 				output<<<1,NEU_NUM2,0,stream[i1]>>>(iter,i1,gpu_F1,gpu_omega2,gpu_bias2,gpu_O2);
 				//cudaDeviceSynchronize();
 				SAFE_CALL(cudaMemcpyAsync(O2+i1*NEU_NUM2, gpu_O2+i1*NEU_NUM2, sizeof(double) * NEU_NUM2, cudaMemcpyDeviceToHost, stream[i1]));
-				//cudaDeviceSynchronize();
+				cudaDeviceSynchronize();
 				//double single_loss = lossfunction(O2, processed_labels, i0*DATA_BATCH+i1);
 				//loss = loss + single_loss;
 				
@@ -910,7 +910,7 @@ double training(double * data, double * labels, int x, int y, int z){
 				//cudaDeviceSynchronize();
 				//backward convolution
 				bp_update_kernel<<<KER_NUM,(NEIGHBOR+1)*P_NUM,0,stream[i1]>>>(iter,i0*DATA_BATCH+i1,i1,LEARN_RATE,z,mre_num,re_size,gpu_mre_index,gpu_delta_22,gpu_delta_kw,gpu_delta_kb,gpu_processed_train);
-				//cudaDeviceSynchronize();*/
+				cudaDeviceSynchronize();
 			}
 			cudaDeviceSynchronize();
 			for(int j0=0; j0<batch_size; j0++){
@@ -1019,18 +1019,19 @@ double training(double * data, double * labels, int x, int y, int z){
 	//test
 	double right = 0;
 	double count0 = 0;
+    cudaStream_t testStream[test_size]; 
 	for (int i1=0; i1<test_size; i1++){
 		int iter = 0;
-		convol<<<KER_NUM,re_size>>>(iter,i1,0,gpu_processed_test,gpu_kernel,gpu_re,gpu_bias0,z,re_size);
+		convol<<<KER_NUM,re_size, 0, testStream[i1]>>>(iter,i1,0,gpu_processed_test,gpu_kernel,gpu_re,gpu_bias0,z,re_size);
 		cudaDeviceSynchronize();
 
-		maxpooling<<<KER_NUM,mre_num>>>(iter,0,gpu_re,gpu_mre,gpu_mre_index,re_size,mre_num);
+		maxpooling<<<KER_NUM,mre_num, 0, testStream[i1]>>>(iter,0,gpu_re,gpu_mre,gpu_mre_index,re_size,mre_num);
 		cudaDeviceSynchronize();
 
-		fullconnect<<<NEU_NUM1,mre_size>>>(iter,0,gpu_mre,gpu_omega1,gpu_bias1,gpu_F1,mre_size);
+		fullconnect<<<NEU_NUM1,mre_size, 0, testStream[i1]>>>(iter,0,gpu_mre,gpu_omega1,gpu_bias1,gpu_F1,mre_size);
 		cudaDeviceSynchronize();
 
-		output<<<1,NEU_NUM2>>>(iter,0,gpu_F1,gpu_omega2,gpu_bias2,gpu_O2);
+		output<<<1,NEU_NUM2, 0, testStream[i1]>>>(iter,0,gpu_F1,gpu_omega2,gpu_bias2,gpu_O2);
 		cudaDeviceSynchronize();
 
 		SAFE_CALL(cudaMemcpy(O2, gpu_O2, sizeof(double) * NEU_NUM2, cudaMemcpyDeviceToHost));
@@ -1079,5 +1080,6 @@ int main(int argc, char * argv[])
 	fprintf(stdout,"Correct Rate:%lf(300 iterations, train:test=4:1)\n",correct);
 	double usetime = double(end - start);
 	fprintf(stdout, "Execution time of the whole program:%lfs\n",usetime/CLOCKS_PER_SEC);
+    cudaDeviceReset();
 	return 0;
 }
