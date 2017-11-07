@@ -16,8 +16,8 @@ const int GP_NUM = 2;//size of each group
 const int NEU_NUM1 = 100;//number of neurons in full connection layer
 const int NEU_NUM2 = 13;//output layer
 const int NEIGHBOR = 8;//number of neighbor pixels
-double LEARN_RATE = 0.2;
-const double MIN_ERR = 0;
+float LEARN_RATE = 0.02;
+const float MIN_ERR = 0.0001;
 const int VALID_BATCH = 5;
 const int MAX_MRE = 2000;
 const int DATA_BATCH = 100;//batch size
@@ -48,7 +48,7 @@ bool InitCUDA(){
 
 
 //copy data to shared memory
-__device__ void copy_data_to_share(double * data, double data_tmp[1][MAX_MRE],int tid, int offset,int head,int length){
+__device__ void copy_data_to_share(float * data, float data_tmp[1][MAX_MRE],int tid, int offset,int head,int length){
 	for(int i=tid*offset; i<(tid+1)*offset && (i < length); i++){
 		data_tmp[0][i] = data[i+head];
 	}
@@ -56,14 +56,14 @@ __device__ void copy_data_to_share(double * data, double data_tmp[1][MAX_MRE],in
 
 }
 
-/*__device__ void copy_data_to_shared(double * data, double * data_tmp, int head, int length){
+/*__device__ void copy_data_to_shared(float * data, float * data_tmp, int head, int length){
 	for(int i=0;i<length;i++){
 		data_tmp[i] = data[i + head];
 	}
 }*/
 
 //forward convolution
-__global__ static void convol(int iter,int data_id,int batch_id, double * train, double * kernel, double * re, double * bias,int z,int re_size)
+__global__ static void convolution(int iter,int data_id,int batch_id, float * train, float * kernel, float * re, float * bias,int z,int re_size)
 {
 
 	int tid = threadIdx.x;
@@ -71,19 +71,19 @@ __global__ static void convol(int iter,int data_id,int batch_id, double * train,
 
 	if(tid<re_size && bid < KER_NUM)
 	{
-		__shared__ double train_tmp[1][MAX_MRE];
+		__shared__ float train_tmp[1][MAX_MRE];
 		int head = data_id*(NEIGHBOR+1)*z;
 		int length = (NEIGHBOR+1)*z;
 		int offset = (length - 1)/re_size + 1;
 		copy_data_to_share(train,train_tmp,tid,offset,head,(NEIGHBOR+1)*z);
-		__shared__ double kernel_tmp[1][MAX_MRE];
+		__shared__ float kernel_tmp[1][MAX_MRE];
 		head = bid * (NEIGHBOR+1)*P_NUM;
 		length = (NEIGHBOR+1)*P_NUM;
 		offset = (length - 1)/re_size + 1;
 		copy_data_to_share(kernel,kernel_tmp,tid,offset,head,length);
 		__syncthreads();
 
-		double mid = 0;
+		float mid = 0;
 		for(int i=0;i<(NEIGHBOR+1)*P_NUM;i++){
 			mid = mid + kernel_tmp[0][i] * train_tmp[0][tid*(NEIGHBOR+1)*LEAP + i];
 		}
@@ -93,14 +93,14 @@ __global__ static void convol(int iter,int data_id,int batch_id, double * train,
 }
 
 //forward maxpooling
-__global__ static void maxpooling(int iter, int batch_id, double * re, double * mre,int * mre_index,int re_size,int mre_num){
+__global__ static void maxpooling(int iter, int batch_id, float * re, float * mre,int * mre_index,int re_size,int mre_num){
 	/*int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	
 	}*/
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if(tid<mre_num && bid<KER_NUM){
-		double mid;
+		float mid;
 		int mid_index, head, tail;
 		head = tid*GP_NUM + bid*re_size + batch_id*re_size*KER_NUM;
 		tail = (tid+1)*GP_NUM + bid*re_size + batch_id*re_size*KER_NUM;
@@ -118,12 +118,12 @@ __global__ static void maxpooling(int iter, int batch_id, double * re, double * 
 }
 
 //forward full connection
-__global__ static void fullconnect(int iter,int batch_id, double * mre, double * omega, double * bias, double * F1,int mre_size){
+__global__ static void fully_connect(int iter,int batch_id, float * mre, float * omega, float * bias, float * F1,int mre_size){
 
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if(tid<mre_size && bid<NEU_NUM1){
-		__shared__ double ner[1][MAX_MRE];
+		__shared__ float ner[1][MAX_MRE];
 		ner[0][tid] = omega[bid + tid*NEU_NUM1] * mre[tid + batch_id*mre_size];
 		__syncthreads();//waiting for other threads
 
@@ -146,21 +146,21 @@ __global__ static void fullconnect(int iter,int batch_id, double * mre, double *
 }
 
 //forward output
-__global__ static void output(int iter, int batch_id, double * F1, double * omega2, double * bias, double * O2){
+__global__ static void output(int iter, int batch_id, float * F1, float * omega2, float * bias, float * O2){
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int threadNum = blockDim.x * gridDim.x;
 	int id = tid + iter * threadNum;
 
 	if(id < NEU_NUM2){
 		//copy F1 to shared memory
-		__shared__ double F1_tmp[1][MAX_MRE];
+		__shared__ float F1_tmp[1][MAX_MRE];
 		int offset = (NEU_NUM1-1)/NEU_NUM2 + 1;
 		copy_data_to_share(F1, F1_tmp, id, offset, batch_id*NEU_NUM1, NEU_NUM1);
 		__syncthreads();
-		__shared__ double O2_tmp[1][NEU_NUM2];
+		__shared__ float O2_tmp[1][NEU_NUM2];
 
 		//compute the output of a neuron
-		double mid = 0;
+		float mid = 0;
 		for(int i=0; i<NEU_NUM1; i++){
 			mid = mid + omega2[id + i*NEU_NUM2] * F1_tmp[0][i];
 		}
@@ -186,7 +186,7 @@ __global__ static void output(int iter, int batch_id, double * F1, double * omeg
 
 
 //backward output
-__global__ static void bp_output(int iter, int train_idx, int batch_id, double LEARN_RATE, double * labels, double * O2, double * delta_L_z)
+__global__ static void bp_output(int iter, int train_idx, int batch_id, float * labels, float * O2, float * delta_L_z)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int threadNum = blockDim.x * gridDim.x;
@@ -195,13 +195,13 @@ __global__ static void bp_output(int iter, int train_idx, int batch_id, double L
 		delta_L_z[id + batch_id*NEU_NUM2] = (O2[id + batch_id*NEU_NUM2] - labels[id + train_idx * NEU_NUM2])/NEU_NUM2;
 	}
 }
-//backward fullconnect
-__global__ static void bp_fullconnect(int iter, int batch_id, double LEARN_RATE, double * omega2, double * F1, double * delta_L_z, double *delta_f_w, double * delta_f_z)
+//backward fully connect
+__global__ static void bp_fully_connect(int iter, int batch_id, float * omega2, float * F1, float * delta_L_z, float *delta_f_w, float * delta_f_z)
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if(tid<NEU_NUM2 && bid<NEU_NUM1){
-		__shared__ double dfa[1][NEU_NUM2];
+		__shared__ float dfa[1][NEU_NUM2];
 		dfa[0][tid] = omega2[tid + bid*NEU_NUM2] * delta_L_z[tid + batch_id*NEU_NUM2];
 		__syncthreads();
 
@@ -223,26 +223,12 @@ __global__ static void bp_fullconnect(int iter, int batch_id, double LEARN_RATE,
 	}
 }
 //backward maxpooling
-__global__ static void bp_maxpooling(int iter, int mre_size, int re_size, int batch_id, double LEARN_RATE, int * mre_index, double * omega1, double * mre, double * delta_f_z, double * delta_m_w,  double * delta_22)
+__global__ static void bp_maxpooling(int iter, int mre_size, int re_size, int batch_id, int * mre_index, float * omega1, float * mre, float * delta_f_z, float * delta_m_w,  float * delta_22)
 {
-	/*int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    	int threadNum = blockDim.x * gridDim.x;
-    	int id = tid + iter * threadNum;
-	if(id < mre_size){
-		double mid = 0;
-		
-		for(int i=0; i<NEU_NUM1; i++){
-			mid = mid + omega1[i + id*NEU_NUM1] * delta_f_z[i + batch_id*NEU_NUM1];
-			
-			delta_m_w[i + id*NEU_NUM1 + batch_id*mre_size*NEU_NUM1] =mre[id + batch_id*mre_size] * delta_f_z[i + batch_id*NEU_NUM1];
-		}
-		
-		delta_22[mre_index[id + batch_id*mre_size] + batch_id*re_size*KER_NUM] = mid * (1 + mre[id + batch_id*mre_size]) * (1 - mre[id + batch_id*mre_size]);
-	}*/
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if(tid<NEU_NUM1 && bid<mre_size){
-		__shared__ double mid[1][NEU_NUM1];
+		__shared__ float mid[1][NEU_NUM1];
 		mid[0][tid] = omega1[tid + bid*NEU_NUM1] * delta_f_z[tid + batch_id*NEU_NUM1];
 		__syncthreads();//waiting for all threads
 		int length = NEU_NUM1;
@@ -264,7 +250,7 @@ __global__ static void bp_maxpooling(int iter, int mre_size, int re_size, int ba
 }
 
 //backward convolution, update kernel
-__global__ static void bp_update_kernel(int iter, int i0, int batch_id, double LEARN_RATE, int z, int mre_num,int re_size, int * mre_index, double * delta_22, double * delta_k_w, double * delta_k_b, double * data)
+__global__ static void bp_convolution(int iter, int i0, int batch_id, int z, int mre_num,int re_size, int * mre_index, float * delta_22, float * delta_k_w, float * delta_k_b, float * data)
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
@@ -273,16 +259,16 @@ __global__ static void bp_update_kernel(int iter, int i0, int batch_id, double L
 		int head = i0*(NEIGHBOR+1)*z;
 		int length = (NEIGHBOR+1)*z;
 		int offset = (length - 1)/((NEIGHBOR+1)*P_NUM) + 1;
-		__shared__ double train_tmp[1][MAX_MRE];
+		__shared__ float train_tmp[1][MAX_MRE];
 		copy_data_to_share(data, train_tmp, tid, offset, head, length);
 		__syncthreads();
-		//extern __shared__ double train_tmp[];
+		//extern __shared__ float train_tmp[];
                 //copy_data_to_shared(data, train_tmp, (NEIGHBOR+1)*z*i0, (NEIGHBOR+1)*z);
-		__shared__ double delta_kw[1][(NEIGHBOR+1)*P_NUM];
+		__shared__ float delta_kw[1][(NEIGHBOR+1)*P_NUM];
 		delta_kw[0][tid] = 0;
 
 		int idx, n, i, h;
-		double mid = 0;
+		float mid = 0;
 		for(i=0; i<mre_num; i++){
 			idx = mre_index[i + bid*mre_num + batch_id*mre_num*KER_NUM];
 			n = idx % re_size;
@@ -300,23 +286,13 @@ __global__ static void bp_update_kernel(int iter, int i0, int batch_id, double L
 	}
 }
 
-//modify function, output layer
-__global__ static void modify_output(int iter,int batch_size, double LEARN_RATE, double * delta_L_z, double * bias2)
+//update function, output layer
+__global__ static void update_output(int iter,int batch_size, float LEARN_RATE, float * delta_L_z, float * bias2)
 {
-	/*int tid = blockIdx.x * blockDim.x + threadIdx.x;
-	int threadNum = blockDim.x * gridDim.x;
-	int id = tid + iter * threadNum;
-	if(id < NEU_NUM2){
-		double mid = 0;
-		for(int i=0; i<batch_size; i++){
-			mid = mid + delta_L_z[id + i*NEU_NUM2];
-		}
-		bias2[id] = bias2[id] - mid*LEARN_RATE;
-	}*/
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if(tid < batch_size && bid<NEU_NUM2){
-		__shared__ double mid[1][DATA_BATCH];
+		__shared__ float mid[1][DATA_BATCH];
 		mid[0][tid] = delta_L_z[bid + tid*NEU_NUM2];
 		__syncthreads();//waiting for all threads
 
@@ -335,13 +311,13 @@ __global__ static void modify_output(int iter,int batch_size, double LEARN_RATE,
 			bias2[bid] = bias2[bid] - mid[0][0]*LEARN_RATE/batch_size;
 	}
 }
-//modify function, fullconnect layer
-__global__ static void modify_fullconnect(int batch_size, double LEARN_RATE, double * omega2,double * bias1,double *delta_f_w, double * delta_f_z)
+//update function, fully connect layer
+__global__ static void update_fully_connect(int batch_size, float LEARN_RATE, float * omega2,float * bias1,float *delta_f_w, float * delta_f_z)
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if(tid<NEU_NUM2 && bid<NEU_NUM1){
-		double mid0 = 0, mid1 = 0;
+		float mid0 = 0, mid1 = 0;
 		for(int i=0; i<batch_size; i++){
 			mid0 = mid0 + delta_f_w[tid + bid*NEU_NUM2 + i*NEU_NUM1*NEU_NUM2];
 			mid1 = mid1 + delta_f_z[bid + i*NEU_NUM1];
@@ -353,27 +329,13 @@ __global__ static void modify_fullconnect(int batch_size, double LEARN_RATE, dou
 		}
 	}
 }
-//modify function, maxpooling layer
-__global__ static void modify_maxpooling(int iter, int mre_size, int batch_size, double LEARN_RATE, double * omega1, double * delta_m_w)
+//update function, maxpooling layer
+__global__ static void update_maxpooling(int iter, int mre_size, int batch_size, float LEARN_RATE, float * omega1, float * delta_m_w)
 {
-	/*int tid = blockIdx.x * blockDim.x + threadIdx.x;
-	int threadNum = blockDim.x * gridDim.x;
-	int id = tid + iter * threadNum;
-	if(id < mre_size){
-		double mid;
-		for(int i=0; i<NEU_NUM1; i++){
-			mid = 0;
-			for(int j=0; j<batch_size; j++){
-				mid = mid + delta_m_w[i + id*NEU_NUM1 + j*mre_size*NEU_NUM1];
-			}
-			omega1[i + id*NEU_NUM1] = omega1[i + id*NEU_NUM1] - LEARN_RATE * mid;
-		}
-
-	}*/
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if(tid<NEU_NUM1 && bid<mre_size){
-		double mid=0;
+		float mid=0;
 		for(int i=0; i<batch_size; i++){
 			mid = mid + delta_m_w[tid + bid*NEU_NUM1 + i*mre_size*NEU_NUM1];
 		}
@@ -382,14 +344,14 @@ __global__ static void modify_maxpooling(int iter, int mre_size, int batch_size,
 	}
 }
 
-//modify function, convolution layer
-__global__ static void modify_update_kernel(int batch_size, int re_size, double LEARN_RATE, double * delta_22, double * delta_k_w, double * delta_k_b, double * kernel,double * bias0)
+//update function, convolution layer
+__global__ static void update_convolution(int batch_size, int re_size, float LEARN_RATE, float * delta_22, float * delta_k_w, float * delta_k_b, float * kernel,float * bias0)
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if(tid < ((NEIGHBOR+1)*P_NUM) && (bid < KER_NUM))
 	{
-		double mid0 = 0, mid1 = 0;
+		float mid0 = 0, mid1 = 0;
 		for(int i=0; i<batch_size; i++){
 			mid0 = mid0 + delta_k_w[tid + bid*(NEIGHBOR+1)*P_NUM +i*(NEIGHBOR+1)*P_NUM*KER_NUM];
 			mid1 = mid1 + delta_k_b[bid + i*KER_NUM];
@@ -403,22 +365,40 @@ __global__ static void modify_update_kernel(int batch_size, int re_size, double 
 }
 
 
-__global__ static void loss_function(int batch_id, int batch_size, double * O2, double * labels, double * loss_values)
+__global__ static void loss_function(int batch_id, int batch_size, float * O2, float * labels, float * loss_values_sum)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    double tmp = 0.0;
+    float tmp = 0.0;
     if (tid < batch_size){
+        __shared__ float loss_values[1][DATA_BATCH];
         for (int i=0; i < NEU_NUM2; i++){
             tmp = tmp + labels[i + (batch_id * DATA_BATCH + tid) * NEU_NUM2] * log(O2[i + tid * NEU_NUM2]) + 
                    (1 - labels[i + (batch_id * DATA_BATCH + tid) * NEU_NUM2]) * log(1 - O2[i + tid * NEU_NUM2]);
         }
+    
+        loss_values[0][tid] = -tmp/NEU_NUM2;
+        __syncthreads();
+
+        int length = batch_size;
+        int offset = (length - 1)/2 + 1;
+    
+        while (length >= 2){
+            if(tid + offset < length){
+                loss_values[0][tid] = loss_values[0][tid] + loss_values[0][tid + offset];
+            }
+
+            length = (length - 1)/2 + 1;
+            offset = (offset - 1)/2 + 1;
+            __syncthreads();
+        }
+
+        loss_values_sum[0] = loss_values[0][0];
     }
-    loss_values[tid] = -tmp/NEU_NUM2;
 }
 
 //preprocessing
-__global__ static void processing(int iter, double * data, int * train_index, double * processed_data, int x, int y, int z, int train_size)
+__global__ static void preprocessing(int iter, float * data, int * train_index, float * processed_data, int x, int y, int z, int train_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int threadNum = blockDim.x * gridDim.x;
@@ -437,8 +417,8 @@ __global__ static void processing(int iter, double * data, int * train_index, do
 	}
 }
 
-double lossfunction(double * output, double * labels, int idx){
-	double l = 0;
+float lossfunction(float * output, float * labels, int idx){
+	float l = 0;
 	int i;
 	for(i=0; i<NEU_NUM2; i++){
 		l = l + labels[i + idx*NEU_NUM2] * log(output[i]) + (1 - labels[i + idx*NEU_NUM2])*log(1 - output[i]); 
@@ -450,10 +430,10 @@ double lossfunction(double * output, double * labels, int idx){
 
 
 //compute correct rate
-double count_err(double * test_labels, double * output, int test_idx)
+float count_err(float * test_labels, float * output, int test_idx)
 {
-	double right=0;
-	double max =0;
+	float right=0;
+	float max =0;
 	int idx = 0;
 	int i;
 	for(i=0; i<NEU_NUM2; i++){
@@ -469,23 +449,23 @@ double count_err(double * test_labels, double * output, int test_idx)
 }
 
 //Insert current loss value to the queue
-void insert_line(double * a, double b){
+void insert_line(float * a, float b){
 	for(int i=1; i<VALID_BATCH; i++){
 		a[i-1] = a[i];
 	}
 	a[VALID_BATCH-1] = b;
 }
 
-double max(double * a){
-	double m=a[0];
+float max(float * a){
+	float m=a[0];
 	for(int i=1; i<VALID_BATCH; i++){
 		if(m<a[i])
 			m=a[i];
 	}
 	return m;
 }
-double min(double * a){
-    double mini = a[0];
+float min(float * a){
+    float mini = a[0];
     for(int i=1; i<VALID_BATCH; i++){
         if(mini > a[i]){
             mini = a[i];
@@ -494,10 +474,10 @@ double min(double * a){
     return mini;
 }
 //shuffle
-void shuffle(int * data, double * labels, int dim_row, int width){
+void shuffle(int * data, float * labels, int dim_row, int width){
 	int index,  i;
 	int temp;
-	double tmp;
+	float tmp;
 	srand(time(NULL));
 	for(i=0; i<width; i++){
 		index=rand()%(width-i) + i;
@@ -518,27 +498,29 @@ void shuffle(int * data, double * labels, int dim_row, int width){
 }
 
 //training
-double training(double * data, double * labels, int x, int y, int z){
+float training(float * data, double * labels, int x, int y, int z){
 	clock_t start, end;
 	start = clock();	
-	double * gpu_data;//original hyperspectral image, saved in global memory
-	double * gpu_processed_train;//extracted train samples
-	double * gpu_processed_test;//extracted test samples
-	//double * gpu_processed_valid;
+	float * gpu_data;//original hyperspectral image, saved in global memory
+	float * gpu_processed_train;//extracted train samples
+	float * gpu_processed_test;//extracted test samples
+	//float * gpu_processed_valid;
 	int * gpu_train_index;//index of train samples and their neighbors
 	int * gpu_test_index;//index of test samples
 	//int * gpu_valid_index;
-	double * gpu_processed_labels;//encoded train labels
+	float * gpu_processed_labels;//encoded train labels
 
 	//preprocessing
 	int data_size = 0;
 	int * data_index = new int [x*y];
 	for(int i=0; i<x*y; i++){
-		if(labels[i] != 0){
+		if(labels[i] != 0 ){
 			data_index[data_size]=i;
 			data_size ++;
 		}
 	}
+    cout<< "data_size = " << data_size <<endl; //DH
+
 	int test_size = (data_size-1)/5 + 1;
 	//int valid_size = test_size;
 	int train_size = data_size - test_size;
@@ -547,9 +529,9 @@ double training(double * data, double * labels, int x, int y, int z){
 	//int * valid_index = new int [valid_size * (NEIGHBOR + 1)];
 	int * test_index = new int [test_size * (NEIGHBOR+1)];
 
-	double * processed_labels = new double [train_size * NEU_NUM2]();
-	double * test_labels = new double [test_size]();
-	//double * valid_labels = new double [valid_size]();
+	float * processed_labels = new float [train_size * NEU_NUM2]();
+	float * test_labels = new float [test_size]();
+	//float * valid_labels = new float [valid_size]();
 	int tr=0, te=0;
 	for (int i=0; i<data_size; i++){
 		if (i%5 != 0){
@@ -656,7 +638,7 @@ double training(double * data, double * labels, int x, int y, int z){
 			}
 
 			//int mid = int(labels[data_index[i]])-1 + te*NEU_NUM2;
-			test_labels[te] = labels[data_index[i]];
+			test_labels[te] = float(labels[data_index[i]]);
 			te = te + 1;
 		}
 	}
@@ -674,8 +656,8 @@ double training(double * data, double * labels, int x, int y, int z){
 	//int * train_index = new int [train_size * (NEIGHBOR + 1)];
 
 	//malloc GPU memory, copy data to GPU
-	SAFE_CALL(cudaMalloc((void **) &gpu_data, sizeof(double) * x * y * z));
-	SAFE_CALL(cudaMemcpy(gpu_data, data, sizeof(double)* x * y * z, cudaMemcpyHostToDevice));
+	SAFE_CALL(cudaMalloc((void **) &gpu_data, sizeof(float) * x * y * z));
+	SAFE_CALL(cudaMemcpy(gpu_data, data, sizeof(float)* x * y * z, cudaMemcpyHostToDevice));
 
 	SAFE_CALL(cudaMalloc((void **) &gpu_train_index, sizeof(int) * train_size * (NEIGHBOR+1)));
 	SAFE_CALL(cudaMemcpy(gpu_train_index, train_index, sizeof(int) * train_size * (NEIGHBOR+1), cudaMemcpyHostToDevice));
@@ -684,30 +666,23 @@ double training(double * data, double * labels, int x, int y, int z){
 	//SAFE_CALL(cudaMalloc((void **) &gpu_valid_index, sizeof(int) * valid_size * (NEIGHBOR+1)));
 	//SAFE_CALL(cudaMemcpy(gpu_valid_index, valid_index, sizeof(int) * valid_size * (NEIGHBOR+1), cudaMemcpyHostToDevice));
 
-	//SAFE_CALL(cudaMalloc((void **) &gpu_processed_valid, sizeof(double) * valid_size * (NEIGHBOR+1) * z));
-	SAFE_CALL(cudaMalloc((void **) &gpu_processed_test, sizeof(double) * test_size * (NEIGHBOR+1) * z));
-	SAFE_CALL(cudaMalloc((void **) &gpu_processed_train, sizeof(double) * train_size * (NEIGHBOR+1) * z));
+	//SAFE_CALL(cudaMalloc((void **) &gpu_processed_valid, sizeof(float) * valid_size * (NEIGHBOR+1) * z));
+	SAFE_CALL(cudaMalloc((void **) &gpu_processed_test, sizeof(float) * test_size * (NEIGHBOR+1) * z));
+	SAFE_CALL(cudaMalloc((void **) &gpu_processed_train, sizeof(float) * train_size * (NEIGHBOR+1) * z));
 
 	int gridsize = 64;
 	int blocksize = 1024;
-	//int threadNum = gridsize * blocksize; 
-	//double * processed_train = new double [train_size * (NEIGHBOR+1) * z];
-	//double * processed_test = new double [test_size * (NEIGHBOR+1) * z];
-    //double * processed_valid = new double [valid_size * (NEIGHBOR+1) * z];
-	//预处理
-	int iter=0;
-	processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_train_index, gpu_processed_train, x, y, z, train_size);
-	processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_test_index, gpu_processed_test, x, y, z, test_size);
-	//processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_valid_index, gpu_processed_valid, x, y, z, valid_size);
 
-	cudaDeviceSynchronize();
-	end = clock();
-	double tt = double(end - start);
+    int iter = 0;
+    preprocessing<<<gridsize, blocksize>>>(iter, gpu_data, gpu_train_index, gpu_processed_train, x, y, z, train_size);
+    preprocessing<<<gridsize, blocksize>>>(iter, gpu_data, gpu_test_index, gpu_processed_test, x, y, z, test_size);
+    end = clock();
+	float tt = float(end - start);
 	fprintf(stdout,"Preprocessing Done. (%lfs)\n",tt/CLOCKS_PER_SEC);
 
-	//SAFE_CALL(cudaMemcpy(processed_train, gpu_processed_train, sizeof(double) * train_size * (NEIGHBOR+1) * z, cudaMemcpyDeviceToHost));
-	//SAFE_CALL(cudaMemcpy(processed_test, gpu_processed_test, sizeof(double) * test_size * (NEIGHBOR+1) * z, cudaMemcpyDeviceToHost));
-    //SAFE_CALL(cudaMemcpy(processed_valid, gpu_processed_valid, sizeof(double) * valid_size * (NEIGHBOR+1) * z, cudaMemcpyDeviceToHost));
+	//SAFE_CALL(cudaMemcpy(processed_train, gpu_processed_train, sizeof(float) * train_size * (NEIGHBOR+1) * z, cudaMemcpyDeviceToHost));
+	//SAFE_CALL(cudaMemcpy(processed_test, gpu_processed_test, sizeof(float) * test_size * (NEIGHBOR+1) * z, cudaMemcpyDeviceToHost));
+    //SAFE_CALL(cudaMemcpy(processed_valid, gpu_processed_valid, sizeof(float) * valid_size * (NEIGHBOR+1) * z, cudaMemcpyDeviceToHost));
 
 	SAFE_CALL(cudaFree(gpu_data));
 	SAFE_CALL(cudaFree(gpu_train_index));
@@ -721,11 +696,11 @@ double training(double * data, double * labels, int x, int y, int z){
 
     
 	//forward pass
-	double * kernel = new double [(NEIGHBOR+1)*P_NUM*KER_NUM];
+	float * kernel = new float [(NEIGHBOR+1)*P_NUM*KER_NUM];
 
 	//random initialize 
 	for(int i=0; i<(NEIGHBOR+1)*P_NUM*KER_NUM; i++){
-		kernel[i] = 2*(rand()/(double)(RAND_MAX)) - 1 ;
+		kernel[i] = 2*(rand()/(float)(RAND_MAX)) - 1 ;
 		kernel[i] = kernel[i]/20;
 		if(kernel[i] == 0 )
 			kernel[i] = 0.005;
@@ -738,7 +713,7 @@ double training(double * data, double * labels, int x, int y, int z){
 		re_size ++;
 	}
 
-	//double * re = new double [re_size * KER_NUM];
+	//float * re = new float [re_size * KER_NUM];
 	fprintf(stdout,"re_size:%d\n",re_size);
 
 	int mre_num = (re_size-1)/GP_NUM + 1;
@@ -747,77 +722,77 @@ double training(double * data, double * labels, int x, int y, int z){
 	int ome_num1 = mre_num * KER_NUM * NEU_NUM1;//number of weights in full connection layer
 	int ome_num2 = NEU_NUM1 * NEU_NUM2;//number of weights in output layer
 	
-	double * gpu_kernel;
-	double * gpu_bias0;
-	double * gpu_re;//results of concolution layer
-	double * gpu_mre;//results of maxpooling layer
+	float * gpu_kernel;
+	float * gpu_bias0;
+	float * gpu_re;//results of concolution layer
+	float * gpu_mre;//results of maxpooling layer
 	int * gpu_mre_index;//index of max value in each group
-	double * gpu_omega1;//weighs of full connection layer
-	double * gpu_F1;//outputs of full connection layer
-	double * gpu_bias1;
-	double * gpu_omega2;
-	double * gpu_O2;
-	double * gpu_bias2;
-	double * gpu_delta_Lz;
-	double * gpu_delta_fz;
-	double * gpu_delta_fw;
-	double * gpu_delta_mw;	
-	double * gpu_delta_22;
-	double * gpu_delta_kb;
-	double * gpu_delta_kw;
-    double * gpu_loss_values;
+	float * gpu_omega1;//weighs of full connection layer
+	float * gpu_F1;//outputs of full connection layer
+	float * gpu_bias1;
+	float * gpu_omega2;
+	float * gpu_O2;
+	float * gpu_bias2;
+	float * gpu_delta_Lz;
+	float * gpu_delta_fz;
+	float * gpu_delta_fw;
+	float * gpu_delta_mw;	
+	float * gpu_delta_22;
+	float * gpu_delta_kb;
+	float * gpu_delta_kw;
+    float * gpu_loss_values;
 
 	//copy labels to GPU
-	SAFE_CALL(cudaMalloc((void**) &gpu_processed_labels, sizeof(double) * train_size * NEU_NUM2));
-	SAFE_CALL(cudaMemcpy(gpu_processed_labels,processed_labels,sizeof(double) * train_size * NEU_NUM2,cudaMemcpyHostToDevice));
+	SAFE_CALL(cudaMalloc((void**) &gpu_processed_labels, sizeof(float) * train_size * NEU_NUM2));
+	SAFE_CALL(cudaMemcpy(gpu_processed_labels,processed_labels,sizeof(float) * train_size * NEU_NUM2,cudaMemcpyHostToDevice));
 	//copy filters to GPU
-	SAFE_CALL(cudaMalloc((void**) &gpu_kernel,sizeof(double) * (NEIGHBOR+1) * P_NUM * KER_NUM));
-	SAFE_CALL(cudaMemcpy(gpu_kernel,kernel,sizeof(double) * (NEIGHBOR+1) * P_NUM * KER_NUM,cudaMemcpyHostToDevice));
+	SAFE_CALL(cudaMalloc((void**) &gpu_kernel,sizeof(float) * (NEIGHBOR+1) * P_NUM * KER_NUM));
+	SAFE_CALL(cudaMemcpy(gpu_kernel,kernel,sizeof(float) * (NEIGHBOR+1) * P_NUM * KER_NUM,cudaMemcpyHostToDevice));
 	//malloc GPU memory for convolutional results
-	SAFE_CALL(cudaMalloc((void **) &gpu_re,sizeof(double) * re_size * KER_NUM * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_re,sizeof(float) * re_size * KER_NUM * DATA_BATCH));
 	//malloc GPU memory for delta_Lz
-	SAFE_CALL(cudaMalloc((void **) &gpu_delta_Lz, sizeof(double) * NEU_NUM2 * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_delta_Lz, sizeof(float) * NEU_NUM2 * DATA_BATCH));
 
 	//delta_f in full connection layer
-	SAFE_CALL(cudaMalloc((void **) &gpu_delta_fz, sizeof(double) * NEU_NUM1 * DATA_BATCH));
-	SAFE_CALL(cudaMalloc((void **) &gpu_delta_fw, sizeof(double) * NEU_NUM1 * NEU_NUM2 * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_delta_fz, sizeof(float) * NEU_NUM1 * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_delta_fw, sizeof(float) * NEU_NUM1 * NEU_NUM2 * DATA_BATCH));
 
 	//maxpooling
-	SAFE_CALL(cudaMalloc((void **) &gpu_delta_mw, sizeof(double) * mre_size * NEU_NUM1 * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_delta_mw, sizeof(float) * mre_size * NEU_NUM1 * DATA_BATCH));
 
 	//delta in input layer
-	SAFE_CALL(cudaMalloc((void **) &gpu_delta_22,sizeof(double) * re_size * KER_NUM * DATA_BATCH));
-	SAFE_CALL(cudaMalloc((void **) &gpu_delta_kw, sizeof(double) * (NEIGHBOR+1) * P_NUM * KER_NUM * DATA_BATCH));
-	SAFE_CALL(cudaMalloc((void **) &gpu_delta_kb, sizeof(double) * KER_NUM * DATA_BATCH));
-    SAFE_CALL(cudaMalloc((void**) &gpu_loss_values, sizeof(double) * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_delta_22,sizeof(float) * re_size * KER_NUM * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_delta_kw, sizeof(float) * (NEIGHBOR+1) * P_NUM * KER_NUM * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_delta_kb, sizeof(float) * KER_NUM * DATA_BATCH));
+    SAFE_CALL(cudaMalloc((void **) &gpu_loss_values, sizeof(float) * 2 ));
 
-	double * omega1 = new double [ome_num1];
-	double * omega2 = new double [ome_num2];
-	double * bias0 = new double [KER_NUM];
-	double * bias1 = new double [NEU_NUM1];
-	double * bias2 = new double [NEU_NUM2];
+	float * omega1 = new float [ome_num1];
+	float * omega2 = new float [ome_num2];
+	float * bias0 = new float [KER_NUM];
+	float * bias1 = new float [NEU_NUM1];
+	float * bias2 = new float [NEU_NUM2];
 
 	//Initialize omega1
 	for(int i=0; i<ome_num1; i++){
-		omega1[i] = 2 * (rand()/(double)(RAND_MAX)) - 1;
+		omega1[i] = 2 * (rand()/(float)(RAND_MAX)) - 1;
 		omega1[i] = omega1[i]/20;
 	        if(omega1[i] == 0)
 			omega1[i] = 0.01;
 	}
 	//initialize bias0
 	for(int i=0; i<KER_NUM; i++){
-		bias0[i] = 2*(rand()/(double)(RAND_MAX)) - 1;
+		bias0[i] = 2*(rand()/(float)(RAND_MAX)) - 1;
 		bias0[i] = bias0[i]/20;
 	}
 	//initialize bias1
 	for(int i=0; i<NEU_NUM1; i++){
-		bias1[i] = 2*(rand()/(double)(RAND_MAX)) - 1;
+		bias1[i] = 2*(rand()/(float)(RAND_MAX)) - 1;
 		bias1[i] = bias1[i]/20;
 	}
 
 	//initialize omega2
 	for(int i=0; i<ome_num2; i++){
-		omega2[i] = 2 * (rand()/(double)(RAND_MAX)) - 1;
+		omega2[i] = 2 * (rand()/(float)(RAND_MAX)) - 1;
 		omega2[i] = omega2[i]/20;
 		if(omega2[i] ==0)
 			omega2[i] = 0.01;
@@ -825,41 +800,41 @@ double training(double * data, double * labels, int x, int y, int z){
 	//fprintf(stdout, "Bias1: %lf %lf %lf\n",bias1[0],bias1[1],bias1[2]);
 	//initialize bias2
 	for(int i=0; i<NEU_NUM2; i++){
-		bias2[i] = 2*(rand()/(double)(RAND_MAX)) - 1;
+		bias2[i] = 2*(rand()/(float)(RAND_MAX)) - 1;
 		bias2[i] = bias2[i]/20;
 	}
 	//fprintf(stdout, "Bias2: %lf %lf %lf\n",bias2[0],bias2[1],bias2[2]);
 
     //malloc GPU memory for network parameters and intermediate results, copy the initialized values to GPU
-	SAFE_CALL(cudaMalloc((void **) &gpu_mre, sizeof(double) * mre_num * KER_NUM * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_mre, sizeof(float) * mre_num * KER_NUM * DATA_BATCH));
 	SAFE_CALL(cudaMalloc((void **) &gpu_mre_index, sizeof(int) * mre_num * KER_NUM * DATA_BATCH));
-	SAFE_CALL(cudaMalloc((void **) &gpu_omega1, sizeof(double) * ome_num1));
-	SAFE_CALL(cudaMalloc((void **) &gpu_omega2, sizeof(double) * ome_num2));
-	SAFE_CALL(cudaMalloc((void **) &gpu_F1, sizeof(double) * NEU_NUM1 * DATA_BATCH));
-	SAFE_CALL(cudaMalloc((void **) &gpu_O2, sizeof(double) * NEU_NUM2 * DATA_BATCH));
-	SAFE_CALL(cudaMalloc((void **) &gpu_bias0, sizeof(double) * KER_NUM));
-	SAFE_CALL(cudaMalloc((void **) &gpu_bias1, sizeof(double) * NEU_NUM1));
-	SAFE_CALL(cudaMalloc((void **) &gpu_bias2, sizeof(double) * NEU_NUM2));
-	SAFE_CALL(cudaMemcpy(gpu_omega1, omega1, sizeof(double) * ome_num1, cudaMemcpyHostToDevice));
-	SAFE_CALL(cudaMemcpy(gpu_omega2, omega2, sizeof(double) * ome_num2, cudaMemcpyHostToDevice));
-	SAFE_CALL(cudaMemcpy(gpu_bias0, bias0, sizeof(double) * KER_NUM, cudaMemcpyHostToDevice));
-	SAFE_CALL(cudaMemcpy(gpu_bias1, bias1, sizeof(double) * NEU_NUM1, cudaMemcpyHostToDevice));
-	SAFE_CALL(cudaMemcpy(gpu_bias2, bias2, sizeof(double) * NEU_NUM2, cudaMemcpyHostToDevice));
+	SAFE_CALL(cudaMalloc((void **) &gpu_omega1, sizeof(float) * ome_num1));
+	SAFE_CALL(cudaMalloc((void **) &gpu_omega2, sizeof(float) * ome_num2));
+	SAFE_CALL(cudaMalloc((void **) &gpu_F1, sizeof(float) * NEU_NUM1 * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_O2, sizeof(float) * NEU_NUM2 * DATA_BATCH));
+	SAFE_CALL(cudaMalloc((void **) &gpu_bias0, sizeof(float) * KER_NUM));
+	SAFE_CALL(cudaMalloc((void **) &gpu_bias1, sizeof(float) * NEU_NUM1));
+	SAFE_CALL(cudaMalloc((void **) &gpu_bias2, sizeof(float) * NEU_NUM2));
+	SAFE_CALL(cudaMemcpy(gpu_omega1, omega1, sizeof(float) * ome_num1, cudaMemcpyHostToDevice));
+	SAFE_CALL(cudaMemcpy(gpu_omega2, omega2, sizeof(float) * ome_num2, cudaMemcpyHostToDevice));
+	SAFE_CALL(cudaMemcpy(gpu_bias0, bias0, sizeof(float) * KER_NUM, cudaMemcpyHostToDevice));
+	SAFE_CALL(cudaMemcpy(gpu_bias1, bias1, sizeof(float) * NEU_NUM1, cudaMemcpyHostToDevice));
+	SAFE_CALL(cudaMemcpy(gpu_bias2, bias2, sizeof(float) * NEU_NUM2, cudaMemcpyHostToDevice));
 
-	//double * delta_22 = new double [re_size * KER_NUM];
-	//double * bias0 = new double [KER_NUM];
-	double * O2 = new double [NEU_NUM2 * DATA_BATCH];//save output value of the network on Host
-	//double * lz = new double [NEU_NUM2];
-	double * loss_values = new double [DATA_BATCH];
-    double loss;
-    double * logloss = new double [1000]();
-	double * correct_rate = new double [VALID_BATCH];
+	//float * delta_22 = new float [re_size * KER_NUM];
+	//float * bias0 = new float [KER_NUM];
+	float * O2 = new float [NEU_NUM2 * DATA_BATCH];//save output value of the network on Host
+	//float * lz = new float [NEU_NUM2];
+	float * loss_values = new float [DATA_BATCH];
+    float loss;
+    float * logloss = new float [1000]();
+	float * correct_rate = new float [VALID_BATCH];
     	for(int i=0; i<VALID_BATCH; i++){
         	correct_rate[i] = 1;
     	}
 
 	//clock_t * t = new clock_t [8]();
- 	double cur_min = 1;
+ 	float cur_min = 1;
 	int count=1;
 	int batch_size = 0;
 	int batch_num = (train_size - 1)/DATA_BATCH + 1;//count how many bathes are needed to complete the whole training set
@@ -871,7 +846,7 @@ double training(double * data, double * labels, int x, int y, int z){
 		cudaStreamCreate(&stream[i]);
 	}
 	
-	for(int j=0; j<100; j++){
+	for(int j=0; j<300; j++){
 		loss = 0;
 		for(int i0=0; i0<batch_num; i0++)
 		{
@@ -883,66 +858,68 @@ double training(double * data, double * labels, int x, int y, int z){
 			for(int i1=0; i1<batch_size; i1++)
 			{
 				//forward convolution
-				convol<<<KER_NUM,re_size,0,stream[i1]>>>(iter,i0*DATA_BATCH+i1,i1,gpu_processed_train,gpu_kernel,gpu_re,gpu_bias0,z,re_size);
+				convolution<<<KER_NUM,re_size,0,stream[i1]>>>(iter,i0*DATA_BATCH+i1,i1,gpu_processed_train,gpu_kernel,gpu_re,gpu_bias0,z,re_size);
 				//cudaDeviceSynchronize();	
 				
 				//forward maxpooling
 				maxpooling<<<KER_NUM,mre_num,0,stream[i1]>>>(iter,i1,gpu_re,gpu_mre,gpu_mre_index,re_size,mre_num);
 				//cudaDeviceSynchronize();
 				//forward full connection
-				fullconnect<<<NEU_NUM1,mre_size,0,stream[i1]>>>(iter,i1,gpu_mre,gpu_omega1,gpu_bias1,gpu_F1,mre_size);
+				fully_connect<<<NEU_NUM1,mre_size,0,stream[i1]>>>(iter,i1,gpu_mre,gpu_omega1,gpu_bias1,gpu_F1,mre_size);
 				//cudaDeviceSynchronize();
 				//forward output
 				output<<<1,NEU_NUM2,0,stream[i1]>>>(iter,i1,gpu_F1,gpu_omega2,gpu_bias2,gpu_O2);
 				//cudaDeviceSynchronize();
-				//SAFE_CALL(cudaMemcpyAsync(O2+i1*NEU_NUM2, gpu_O2+i1*NEU_NUM2, sizeof(double) * NEU_NUM2, cudaMemcpyDeviceToHost, stream[i1]));
+				//SAFE_CALL(cudaMemcpyAsync(O2+i1*NEU_NUM2, gpu_O2+i1*NEU_NUM2, sizeof(float) * NEU_NUM2, cudaMemcpyDeviceToHost, stream[i1]));
 				//cudaDeviceSynchronize();
-				//double single_loss = lossfunction(O2, processed_labels, i0*DATA_BATCH+i1);
+				//float single_loss = lossfunction(O2, processed_labels, i0*DATA_BATCH+i1);
 				//loss = loss + single_loss;
 				
 				//backward output
-				bp_output<<<1,NEU_NUM2,0,stream[i1]>>>(iter,i0*DATA_BATCH+i1,i1,LEARN_RATE,gpu_processed_labels,gpu_O2,gpu_delta_Lz);
+				bp_output<<<1,NEU_NUM2,0,stream[i1]>>>(iter,i0*DATA_BATCH+i1,i1,gpu_processed_labels,gpu_O2,gpu_delta_Lz);
 				//cudaDeviceSynchronize();
 				//backward full connection
-				bp_fullconnect<<<NEU_NUM1,NEU_NUM2,0,stream[i1]>>>(iter,i1,LEARN_RATE,gpu_omega2,gpu_F1,gpu_delta_Lz,gpu_delta_fw,gpu_delta_fz);
+				bp_fully_connect<<<NEU_NUM1,NEU_NUM2,0,stream[i1]>>>(iter,i1,gpu_omega2,gpu_F1,gpu_delta_Lz,gpu_delta_fw,gpu_delta_fz);
 				//cudaDeviceSynchronize();
 				//backward maxpooling
-				bp_maxpooling<<<mre_size,NEU_NUM1,0,stream[i1]>>>(iter,mre_size,re_size,i1,LEARN_RATE,gpu_mre_index,gpu_omega1,gpu_mre,gpu_delta_fz,gpu_delta_mw,gpu_delta_22);
+				bp_maxpooling<<<mre_size,NEU_NUM1,0,stream[i1]>>>(iter,mre_size,re_size,i1,gpu_mre_index,gpu_omega1,gpu_mre,gpu_delta_fz,gpu_delta_mw,gpu_delta_22);
 				//cudaDeviceSynchronize();
 				//backward convolution
-				bp_update_kernel<<<KER_NUM,(NEIGHBOR+1)*P_NUM,0,stream[i1]>>>(iter,i0*DATA_BATCH+i1,i1,LEARN_RATE,z,mre_num,re_size,gpu_mre_index,gpu_delta_22,gpu_delta_kw,gpu_delta_kb,gpu_processed_train);
+				bp_convolution<<<KER_NUM,(NEIGHBOR+1)*P_NUM,0,stream[i1]>>>(iter,i0*DATA_BATCH+i1,i1,z,mre_num,re_size,gpu_mre_index,gpu_delta_22,gpu_delta_kw,gpu_delta_kb,gpu_processed_train);
 				//cudaDeviceSynchronize();
 			}
 			//cudaDeviceSynchronize();
 			/*for(int j0=0; j0<batch_size; j0++){
 				loss = loss + lossfunction(O2+j0*NEU_NUM2, processed_labels, i0*DATA_BATCH+j0);
 			}*/
+            float loss_tmp = 0;
             loss_function<<<1, DATA_BATCH>>>(i0, batch_size, gpu_O2, gpu_processed_labels, gpu_loss_values);
-            SAFE_CALL(cudaMemcpy(loss_values, gpu_loss_values, sizeof(double) * batch_size, cudaMemcpyDeviceToHost));
-            for (int j0=0; j0<batch_size; j0++)
-                loss += loss_values[j0];
+            SAFE_CALL(cudaMemcpy(&loss_tmp, gpu_loss_values, sizeof(float), cudaMemcpyDeviceToHost));
+            loss += loss_tmp;
+            //for (int j0=0; j0<batch_size; j0++)
+            //    loss = loss_values[0];
 
-			//modify parameters of output layer
-			modify_output<<<NEU_NUM2,batch_size>>>(iter, batch_size, LEARN_RATE, gpu_delta_Lz, gpu_bias2);
+			//update parameters of output layer
+			update_output<<<NEU_NUM2,batch_size>>>(iter, batch_size, LEARN_RATE, gpu_delta_Lz, gpu_bias2);
 			//cudaDeviceSynchronize();
-			//modify parameters of full connection layer
-			modify_fullconnect<<<NEU_NUM1,NEU_NUM2>>>(batch_size, LEARN_RATE, gpu_omega2, gpu_bias1, gpu_delta_fw, gpu_delta_fz);
+			//update parameters of full connection layer
+			update_fully_connect<<<NEU_NUM1,NEU_NUM2>>>(batch_size, LEARN_RATE, gpu_omega2, gpu_bias1, gpu_delta_fw, gpu_delta_fz);
 			//cudaDeviceSynchronize();
-			//modify parameters of maxpooling layer
-			modify_maxpooling<<<mre_size,NEU_NUM1>>>(iter, mre_size, batch_size, LEARN_RATE, gpu_omega1, gpu_delta_mw);
+			//update parameters of maxpooling layer
+			update_maxpooling<<<mre_size,NEU_NUM1>>>(iter, mre_size, batch_size, LEARN_RATE, gpu_omega1, gpu_delta_mw);
 			//cudaDeviceSynchronize();
-			//modify parameters of convolutional layer
-			modify_update_kernel<<<KER_NUM,(NEIGHBOR+1)*P_NUM>>>(batch_size, re_size, LEARN_RATE, gpu_delta_22, gpu_delta_kw, gpu_delta_kb, gpu_kernel, gpu_bias0);
+			//update parameters of convolutional layer
+			update_convolution<<<KER_NUM,(NEIGHBOR+1)*P_NUM>>>(batch_size, re_size, LEARN_RATE, gpu_delta_22, gpu_delta_kw, gpu_delta_kb, gpu_kernel, gpu_bias0);
 			//cudaDeviceSynchronize();
 		}
 		
-		double single_rate = loss/train_size;
+		float single_rate = loss/train_size;
        		logloss[j] = single_rate;
 		//single_rate = single_rate/valid_size;
 		fprintf(stdout,"Iteration %d,	loss = %lf;\n",j+1,single_rate);
         	
 		insert_line(correct_rate,single_rate);//insert current loss into the line
-		double new_min = min(correct_rate);
+		float new_min = min(correct_rate);
         	if(cur_min > new_min){
             		cur_min = new_min;
 		     	count = 1;
@@ -962,17 +939,17 @@ double training(double * data, double * labels, int x, int y, int z){
 
 	fprintf(stdout,"Training completed!\n");
 	end = clock();
-	tt = double(end - start);
+	tt = float(end - start);
 	fprintf(stdout,"Exesution time of training:%lfs\n",tt/CLOCKS_PER_SEC);
 
 	start = clock();
 	//cudaDeviceSynchronize();
-	SAFE_CALL(cudaMemcpy(kernel, gpu_kernel, sizeof(double) * (NEIGHBOR+1) * P_NUM * KER_NUM, cudaMemcpyDeviceToHost));
-	SAFE_CALL(cudaMemcpy(bias0, gpu_bias0, sizeof(double) * KER_NUM, cudaMemcpyDeviceToHost));
-	SAFE_CALL(cudaMemcpy(bias1, gpu_bias1, sizeof(double) * NEU_NUM1, cudaMemcpyDeviceToHost));
-	SAFE_CALL(cudaMemcpy(bias2, gpu_bias2, sizeof(double) * NEU_NUM2, cudaMemcpyDeviceToHost));
-	SAFE_CALL(cudaMemcpy(omega1, gpu_omega1, sizeof(double) * ome_num1, cudaMemcpyDeviceToHost));
-	SAFE_CALL(cudaMemcpy(omega2, gpu_omega2, sizeof(double) * ome_num2, cudaMemcpyDeviceToHost));
+	SAFE_CALL(cudaMemcpy(kernel, gpu_kernel, sizeof(float) * (NEIGHBOR+1) * P_NUM * KER_NUM, cudaMemcpyDeviceToHost));
+	SAFE_CALL(cudaMemcpy(bias0, gpu_bias0, sizeof(float) * KER_NUM, cudaMemcpyDeviceToHost));
+	SAFE_CALL(cudaMemcpy(bias1, gpu_bias1, sizeof(float) * NEU_NUM1, cudaMemcpyDeviceToHost));
+	SAFE_CALL(cudaMemcpy(bias2, gpu_bias2, sizeof(float) * NEU_NUM2, cudaMemcpyDeviceToHost));
+	SAFE_CALL(cudaMemcpy(omega1, gpu_omega1, sizeof(float) * ome_num1, cudaMemcpyDeviceToHost));
+	SAFE_CALL(cudaMemcpy(omega2, gpu_omega2, sizeof(float) * ome_num2, cudaMemcpyDeviceToHost));
 	cudaDeviceSynchronize();
 	//fprintf(stdout,"kernel:%lf %lf %lf %lf\n",kernel[0], kernel[1], kernel[2], kernel[3]);
 
@@ -980,31 +957,31 @@ double training(double * data, double * labels, int x, int y, int z){
 	MATFile * pmatFile;
 	pmatFile = matOpen("model.mat","w");
 	mxArray * m1 = mxCreateDoubleMatrix((NEIGHBOR+1)*P_NUM,KER_NUM,mxREAL);
-	memcpy((void *)mxGetPr(m1), (void *)kernel, sizeof(double) * (NEIGHBOR+1) * P_NUM * KER_NUM);
+	memcpy((void *)mxGetPr(m1), (void *)kernel, sizeof(float) * (NEIGHBOR+1) * P_NUM * KER_NUM);
 	matPutVariable(pmatFile, "kernel", m1);
 
 	mxArray * m2 = mxCreateDoubleMatrix(KER_NUM,1,mxREAL);
-	memcpy((void *)mxGetPr(m2), (void *)bias0, sizeof(double) * KER_NUM);
+	memcpy((void *)mxGetPr(m2), (void *)bias0, sizeof(float) * KER_NUM);
 	matPutVariable(pmatFile, "bias0", m2);
 
 	mxArray * m3 = mxCreateDoubleMatrix(NEU_NUM1,mre_size,mxREAL);
-	memcpy((void *)mxGetPr(m3), (void *)omega1, sizeof(double) * ome_num1);
+	memcpy((void *)mxGetPr(m3), (void *)omega1, sizeof(float) * ome_num1);
 	matPutVariable(pmatFile, "omega1", m3);
 
 	mxArray * m4 = mxCreateDoubleMatrix(NEU_NUM1,1,mxREAL);
-       	memcpy((void *)mxGetPr(m4), (void *)bias1, sizeof(double) * NEU_NUM1);
+       	memcpy((void *)mxGetPr(m4), (void *)bias1, sizeof(float) * NEU_NUM1);
 	matPutVariable(pmatFile, "bias1", m4);
 
 	mxArray * m5 = mxCreateDoubleMatrix(NEU_NUM2,NEU_NUM1,mxREAL);
-	memcpy((void *)mxGetPr(m5), (void *)omega2, sizeof(double) * ome_num2);
+	memcpy((void *)mxGetPr(m5), (void *)omega2, sizeof(float) * ome_num2);
 	matPutVariable(pmatFile, "omega2", m5);
 
 	mxArray * m6 = mxCreateDoubleMatrix(NEU_NUM2,1,mxREAL);
-	memcpy((void *)mxGetPr(m6), (void *)bias2, sizeof(double) * NEU_NUM2);
+	memcpy((void *)mxGetPr(m6), (void *)bias2, sizeof(float) * NEU_NUM2);
 	matPutVariable(pmatFile, "bias2", m6);
 
     	mxArray * m7 = mxCreateDoubleMatrix(300,1,mxREAL);
-    	memcpy((void *)mxGetPr(m7), (void *)logloss, sizeof(double) * 300);
+    	memcpy((void *)mxGetPr(m7), (void *)logloss, sizeof(float) * 300);
     	matPutVariable(pmatFile, "loss", m7);
 
 	matClose(pmatFile);
@@ -1014,7 +991,7 @@ double training(double * data, double * labels, int x, int y, int z){
 	//fprintf(stdout,"F1 Output:%lf %lf; %lf %lf\n",F1[0],F1[1],F1[98],F1[99]);
 	//fprintf(stdout,"O2 Output:%lf %lf; %lf %lf\n",O2[0],O2[1],O2[18],O2[19]);
 	//end = clock();
-	//tt = double(end - start);
+	//tt = float(end - start);
 	//fprintf(stdout, "Using time of writeback:%lfs\n",tt/CLOCKS_PER_SEC);
 	//destroy streams
 	for(int i=0; i<DATA_BATCH; i++){
@@ -1022,23 +999,23 @@ double training(double * data, double * labels, int x, int y, int z){
 	}
 	
 	//test
-	double right = 0;
-	double count0 = 0;
+	float right = 0;
+	float count0 = 0;
 	for (int i1=0; i1<test_size; i1++){
 		int iter = 0;
-		convol<<<KER_NUM,re_size>>>(iter,i1,0,gpu_processed_test,gpu_kernel,gpu_re,gpu_bias0,z,re_size);
+		convolution<<<KER_NUM,re_size>>>(iter,i1,0,gpu_processed_test,gpu_kernel,gpu_re,gpu_bias0,z,re_size);
 		//cudaDeviceSynchronize();
 
 		maxpooling<<<KER_NUM,mre_num>>>(iter,0,gpu_re,gpu_mre,gpu_mre_index,re_size,mre_num);
 		//cudaDeviceSynchronize();
 
-		fullconnect<<<NEU_NUM1,mre_size>>>(iter,0,gpu_mre,gpu_omega1,gpu_bias1,gpu_F1,mre_size);
+		fully_connect<<<NEU_NUM1,mre_size>>>(iter,0,gpu_mre,gpu_omega1,gpu_bias1,gpu_F1,mre_size);
 		//cudaDeviceSynchronize();
 
 		output<<<1,NEU_NUM2>>>(iter,0,gpu_F1,gpu_omega2,gpu_bias2,gpu_O2);
 		//cudaDeviceSynchronize();
 
-		SAFE_CALL(cudaMemcpy(O2, gpu_O2, sizeof(double) * NEU_NUM2, cudaMemcpyDeviceToHost));
+		SAFE_CALL(cudaMemcpy(O2, gpu_O2, sizeof(float) * NEU_NUM2, cudaMemcpyDeviceToHost));
 		//cudaDeviceSynchronize();
 
 		//fprintf(stdout,"\n");
@@ -1046,8 +1023,9 @@ double training(double * data, double * labels, int x, int y, int z){
 		count0 = count0 + right;
 	}
 	end = clock();
-	tt = double(end - start);
+	tt = float(end - start);
 	fprintf(stdout,"Execution time of testing:%lfs\n",tt/CLOCKS_PER_SEC);
+    cout<< "count0 = " <<count0<<endl;
 	return count0/test_size;
 }
 
@@ -1061,7 +1039,8 @@ int main(int argc, char * argv[])
 
 	clock_t start,end;
 
-	double *trainset,*trainlabels;
+	float * trainset;
+    double * trainlabels;
 	if(argc!=2){
 		fprintf(stderr, "2 input arguments required!");
 		return 0;
@@ -1071,7 +1050,7 @@ int main(int argc, char * argv[])
 	mxArray * train = matGetVariable(datamat,"DataSet");
 	mxArray * labels = matGetVariable(datamat,"labels");
 
-	trainset = (double*)mxGetData(train);
+	trainset = (float*)mxGetData(train);
 	trainlabels = (double*)mxGetData(labels);
 
 	const mwSize * dim;
@@ -1079,10 +1058,10 @@ int main(int argc, char * argv[])
 	matClose(datamat);
 
 	start = clock();
-	double correct = training(trainset, trainlabels, dim[0], dim[1], dim[2]);
+	float correct = training(trainset, trainlabels, dim[0], dim[1], dim[2]);
 	end = clock();
 	fprintf(stdout,"Correct Rate:%lf(300 iterations, train:test=4:1)\n",correct);
-	double usetime = double(end - start);
+	float usetime = float(end - start);
 	fprintf(stdout, "Execution time of the whole program:%lfs\n",usetime/CLOCKS_PER_SEC);
 	return 0;
 }
