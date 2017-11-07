@@ -169,7 +169,11 @@ __global__ static void output(int tag, int train_idx, double * F1, double * omeg
         }
 		O2[id] = O2[id]/O2_tmp[0][0];
 
-        if (tag == 1){
+        if (tag == 1)
+        {
+            if (train_idx == 0)
+                loss[0] = 0;
+
             __shared__ double loss_values[NEU_NUM2];
             loss_values[id] = labels[id + train_idx * NEU_NUM2] * log(O2[id]) + (1 - labels[id + train_idx * NEU_NUM2]) * log(1 - O2[id]);
             __syncthreads();
@@ -186,7 +190,7 @@ __global__ static void output(int tag, int train_idx, double * F1, double * omeg
                 __syncthreads();
             }
 
-            loss[0] = -loss_values[0]/NEU_NUM2;
+            loss[0] = loss[0] - loss_values[0]/NEU_NUM2;
         }
 	}
 }
@@ -657,11 +661,10 @@ double training(double * data, double * labels, int x, int y, int z){
     }
 
     double cur_min = 1;
-    double loss_tmp = 0;
 	int count = 1;
     int tag = 1; // for training
 	start = clock();
-	for(int j=0; j<30; j++){
+	for(int j=0; j<300; j++){
 		loss = 0;
 		for(int i0=0; i0<train_size; i0++)
         {
@@ -673,9 +676,7 @@ double training(double * data, double * labels, int x, int y, int z){
 			
 			output<<<1,NEU_NUM2>>>(tag, i0, gpu_F1, gpu_omega2, gpu_bias2, gpu_O2, gpu_processed_labels, gpu_loss);
 
-			SAFE_CALL(cudaMemcpy(&loss_tmp, gpu_loss, sizeof(double), cudaMemcpyDeviceToHost));
-			loss = loss + loss_tmp;
-			
+			// backward propagation
 			bp_output<<<1,NEU_NUM2>>>(i0, LEARN_RATE, gpu_processed_labels, gpu_O2, gpu_bias2, gpu_delta_Lz);
 			
 			bp_fully_connect<<<NEU_NUM1,NEU_NUM2>>>(LEARN_RATE, gpu_omega2, gpu_bias1, gpu_F1, gpu_delta_Lz, gpu_delta_fa, gpu_delta_fz);
@@ -686,6 +687,7 @@ double training(double * data, double * labels, int x, int y, int z){
 
 		}
 
+        SAFE_CALL(cudaMemcpy(&loss, gpu_loss, sizeof(double), cudaMemcpyDeviceToHost));
 		double single_rate = loss/train_size;
         	logloss[j] = single_rate;
 		if(single_rate < MIN_ERR)
