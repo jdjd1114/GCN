@@ -16,7 +16,7 @@ XLINKER = -Xlinker
 ARCH = -arch=sm_35
 
 # source code
-SOURCE = $(SRC)/gcn_mbgd_fp32.cu
+SOURCE = $(SRC)/hyper_version_mGPU_MBGD.cu
 
 # object
 OBJ = $(BIN)/main.o
