@@ -20,7 +20,7 @@ const int NEIGHBOR = 8;
 double learning_rate = 0.2;
 const double MIN_ERR = 0.001;
 const int VALID_BATCH = 5;
-const int DATA_BATCH = 100;
+const int DATA_BATCH = 10;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -203,26 +203,27 @@ __global__ static void convolution( int data_id,
 
 	if ( tid < output_size && bid < filter_num )
 	{
+        int cube_size = cube_len * perLayerSize;
 		extern __shared__ double tmp[];
-        int head = data_id * cube_len * perLayerSize;
-		int length = cube_len * perLayerSize;
-        int offset = (length - 1)/output_size + 1;
+        int head = data_id * cube_size;
+		int length = cube_size;
+        int offset = (length - 1) / output_size + 1;
 		copy_data_to_shared(input, tmp, tid, offset, head, length);
         
         int filterSize = conv_len * perLayerSize;
 		head = bid * filterSize;
 		length = filterSize;
 		offset = (length - 1) / output_size + 1;
-		copy_data_to_shared(filters, tmp + cube_len * perLayerSize, tid, offset, head, length);
+		copy_data_to_shared(filters, tmp + cube_size, tid, offset, head, length);
 		__syncthreads();
 
 		double mid = 0;
 		for(int i = 0; i < filterSize; i++){
-            mid = mid + tmp[i + cube_len * perLayerSize] * tmp[tid * perLayerSize * stride + i];
+            mid = mid + tmp[i + cube_size] * tmp[tid * perLayerSize * stride + i];
 		}
 		mid = mid + bias[bid];
 
-        output[tid + bid * output_size + batch_id * output_size * filter_num] = 2/(1 + (1/exp(2*mid))) - 1;
+        output[tid + bid * output_size + batch_id * output_size * filter_num] = 2 / (1 + (1 / exp(2 * mid))) - 1;
 	}
 }
 
@@ -239,14 +240,15 @@ __global__ static void maxpooling( int batch_id,
 	int bid = blockIdx.x;
     int output_size = (input_size - 1) / pooling_size + 1;
 
-	if ( tid < output_size && bid < group_num ){
+	if ( tid < output_size && bid < group_num )
+	{
 		double max;
 		int max_index, head, tail;
 		head = tid * pooling_size + bid * input_size + batch_id * input_size * group_num;
 		tail = (tid + 1) * pooling_size + bid * input_size + batch_id * input_size * group_num;
 		max = input[head];
 		max_index = head;
-		for ( int i=head; i < tail && (i < (bid + 1) * input_size + batch_id * input_size * group_num); i ++ )
+		for ( int i = head; i < tail && (i < (bid + 1) * input_size + batch_id * input_size * group_num); i ++ )
         {
 			if(max < input[i]){
 				max = input[i];
@@ -308,40 +310,40 @@ __global__ static void output_and_dvalue( int data_id,
                                           double * labels,
                                           double * dValue )
 {
-	int id = blockIdx.x * blockDim.x + threadIdx.x;
+	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-	if (id < neuron_num )
+	if ( tid < neuron_num )
     {
 		// copy to shared memory
 		extern __shared__ double tmp[];
 		int offset = (input_size - 1) / neuron_num + 1;
-		copy_data_to_shared(input, tmp, id, offset, batch_id * input_size, input_size);
+		copy_data_to_shared(input, tmp, tid, offset, batch_id * input_size, input_size);
 		__syncthreads();
 
 		double mid = 0;
 		for ( int i = 0; i < input_size; i ++ ) {
-			mid = mid + weights[id + i * neuron_num] * tmp[i];
+			mid = mid + weights[tid + i * neuron_num] * tmp[i];
 		}
 
-		tmp[id + input_size] = exp(mid + bias[id]);
+		tmp[tid + input_size] = exp(mid + bias[tid]);
 		__syncthreads(); 
 
 		int length = neuron_num;
 		offset = (length - 1) / 2 + 1;
 		while(length >= 2)
 		{
-			if(id + offset < length){
-				tmp[id + input_size] = tmp[id + input_size] + tmp[id + input_size + offset];
+			if(tid + offset < length){
+				tmp[tid + input_size] = tmp[tid + input_size] + tmp[tid + input_size + offset];
 			}
 			offset = (offset - 1) / 2 + 1;
 			length = (length - 1) / 2 + 1;
 			__syncthreads();
 		}
 
-		output[id + batch_id * neuron_num] = exp(mid + bias[id]) / tmp[input_size];
+		output[tid + batch_id * neuron_num] = exp(mid + bias[tid]) / tmp[input_size];
         
         if ( isBackwardPropagation )
-            dValue[id + batch_id * neuron_num] = (output[id + batch_id * neuron_num] - labels[id + data_id * neuron_num]) / neuron_num;
+            dValue[tid + batch_id * neuron_num] = (output[tid + batch_id * neuron_num] - labels[tid + data_id * neuron_num]) / neuron_num;
 	}
 }
 
@@ -351,9 +353,9 @@ __global__ static void output_and_dvalue( int data_id,
 __global__ static void bp_output( int batch_id,
                                          int input_size,
                                          int output_size, 
-                                         double * omega2, 
-                                         double * pre_deltaB, 
-                                         double * pre_deltaW,
+                                         double * weights, 
+                                         double * deltaB, 
+                                         double * deltaW,
                                          double * data, 
                                          double * fol_deltaZ )
 {
@@ -361,14 +363,15 @@ __global__ static void bp_output( int batch_id,
 	int bid = blockIdx.x;
 	if ( tid < output_size && bid < input_size ) {
 		extern __shared__ double delta_A[];
-		delta_A[tid] = omega2[tid + bid * output_size] * pre_deltaB[tid + batch_id * output_size];
+		delta_A[tid] = weights[tid + bid * output_size] * deltaB[tid + batch_id * output_size];
 		__syncthreads();
 
-		pre_deltaW[tid + bid * output_size + batch_id * input_size * output_size] = data[bid + batch_id * input_size] * pre_deltaB[tid + batch_id * output_size]; 
+		deltaW[tid + bid * output_size + batch_id * input_size * output_size] = data[bid + batch_id * input_size] * deltaB[tid + batch_id * output_size]; 
 
 		int length = output_size;
 		int offset = (length - 1)/2 + 1;
-		while(length >= 2){
+		while ( length >= 2 )
+		{
 			if(tid + offset < length){
 				delta_A[tid] = delta_A[tid] + delta_A[tid + offset];
 			}
@@ -388,19 +391,20 @@ __global__ static void bp_output( int batch_id,
 __global__ static void bp_fully_connect( int batch_id, 
                                       int input_size, 
                                       int output_size,
+                                      double * weights,
+                                      double * deltaB,
+                                      double * deltaW,
                                       double * data,
                                       double * data_index,
-                                      double * fol_deltaZ,
-                                      double * weights,
-                                      double * pre_deltaB,
-                                      double * deltaW)
+                                      double * fol_deltaZ )
+                                    
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
 	if( tid < output_size && bid < input_size )
     {
 		extern __shared__ double mid[];
-		mid[tid] = weights[tid + bid * output_size] * pre_deltaB[tid + batch_id * output_size];
+		mid[tid] = weights[tid + bid * output_size] * deltaB[tid + batch_id * output_size];
 		__syncthreads();
 
 		int length = output_size;
@@ -415,10 +419,8 @@ __global__ static void bp_fully_connect( int batch_id,
 		}
 
         double data_tmp = data[bid + batch_id * input_size];
-        //int data_index_tmp = data_index[bid + batch_id * input_size];
 
-		deltaW[tid + bid * output_size + batch_id * input_size * output_size] = data_tmp *
-                                                                           pre_deltaB[tid + batch_id * output_size];
+		deltaW[tid + bid * output_size + batch_id * input_size * output_size] = data_tmp * deltaB[tid + batch_id * output_size];
 		if(tid < 1)
 			fol_deltaZ[bid + batch_id * input_size] = mid[0] * (1 + data_tmp) * (1 - data_tmp);
 	}
@@ -428,7 +430,7 @@ __global__ static void bp_maxpooling( int batch_id,
                                       int input_size,
                                       int output_size,
                                       double * bias,
-                                      double * pre_deltaB,
+                                      double * deltaB,
                                       double * fol_deltaZ )
 {
     int tid = threadIdx.x;
@@ -437,7 +439,7 @@ __global__ static void bp_maxpooling( int batch_id,
     {
         int idx = (int)bias[tid + batch_id * output_size];
 
-        fol_deltaZ[idx] = pre_deltaB[tid + batch_id * output_size];
+        fol_deltaZ[idx] = deltaB[tid + batch_id * output_size];
     }
 }
 
@@ -446,12 +448,10 @@ __global__ static void bp_convolution( int data_id,
                                        int batch_id,  
                                        int stride, 
                                        int perLayerSize,
-                                       int cube_size,
+                                       int cube_len,
                                        int filter_size,
                                        int filter_num,
-                                       //int mre_size,
                                        int output_size,
-                                       //double * pool_index, 
                                        double * pre_deltaB, 
                                        double * deltaW, 
                                        double * deltaB, 
@@ -462,6 +462,7 @@ __global__ static void bp_convolution( int data_id,
     int re_size = output_size / filter_num;
 	if ( tid < filter_size && bid < filter_num)
 	{
+        int cube_size = cube_len * perLayerSize;
 		int head = data_id * cube_size;
 		int length = cube_size;
 		int offset = (length - 1)/filter_size + 1;
@@ -469,13 +470,10 @@ __global__ static void bp_convolution( int data_id,
 		copy_data_to_shared(data, data_tmp, tid, offset, head, length);
         __syncthreads();
 
-		//int idx, h;
 		double mid0 = 0, mid1 = 0;
-		for(int i = 0; i < re_size; i++){
-			//idx = int(pool_index[i + bid * mre_size + batch_id * mre_size * FILTER_NUM]);
-			//h = (idx % re_size) * (NEIGHBOR + 1) * stride;
-			mid0 = mid0 + pre_deltaB[i + bid * re_size + batch_id * re_size * filter_num] * data_tmp[tid + i * perLayerSize * stride];
-			mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * re_size * filter_num];
+		for( int i = 0; i < re_size; i ++ ) {
+			mid0 = mid0 + pre_deltaB[i + bid * re_size + batch_id * output_size] * data_tmp[tid + i * perLayerSize * stride];
+			mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * output_size];
 		}
 
 		deltaW[tid + bid * filter_size + batch_id * filter_size * filter_num] = mid0 / re_size;
@@ -576,31 +574,38 @@ __global__ static void update_convolution( int batch_size,
 	int bid = blockIdx.x;
 	if ( tid < filter_size && bid < FILTER_NUM )
 	{
-		double mid0 = 0, mid1 = 0;
-		for(int i=0; i<batch_size; i++){
-			mid0 = mid0 + deltaW[tid + bid * filter_size + i * filter_size * FILTER_NUM];
-			mid1 = mid1 + deltaB[bid + i*FILTER_NUM];
+		double tmp0 = 0, tmp1 = 0;
+		for( int i = 0; i < batch_size; i ++ ) 
+		{
+			tmp0 = tmp0 + deltaW[tid + bid * filter_size + i * filter_size * FILTER_NUM];
+			tmp1 = tmp1 + deltaB[bid + i*FILTER_NUM];
 		}
-		filters[tid + bid * filter_size] = filters[tid + bid * filter_size] - lr * mid0 / batch_size;
+		filters[tid + bid * filter_size] = filters[tid + bid * filter_size] - lr * tmp0 / batch_size;
 		
-		if(tid < 1){
-			bias[bid] = bias[bid] - lr * mid1 / batch_size;
+		if ( tid < 1 ) {
+			bias[bid] = bias[bid] - lr * tmp1 / batch_size;
 		}	
 	}
 }
 
-__global__ static void loss_function(int batch_id, int batch_size, double * O2, double * labels, double * loss_values)
+__global__ static void loss_function( int batch_id, 
+                                      int batch_size, 
+				      int output_size,
+				      double * output, 
+				      double * labels, 
+				      double * loss_values)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    double tmp = 0.0;
-    if(tid < batch_size){
-        for(size_t i=0; i<NEU_NUM2; i++){
-            tmp = tmp + labels[i + (batch_id * DATA_BATCH + tid) * NEU_NUM2] * log(O2[i + tid * NEU_NUM2]) +
-                  (1 - labels[i + (batch_id * DATA_BATCH + tid) * NEU_NUM2]) * log(1 - O2[i + tid * NEU_NUM2]);
+    if(tid < batch_size)
+    {
+        double tmp = 0.0;
+        for ( size_t i = 0; i < output_size; i ++ ) {
+            tmp = tmp + labels[i + (batch_id * batch_size + tid) * output_size] * log(output[i + tid * output_size]) +
+                  (1 - labels[i + (batch_id * batch_size + tid) * output_size]) * log(1 - output[i + tid * output_size]);
         }
 
-        loss_values[tid] = -tmp/NEU_NUM2;
+        loss_values[tid] = -tmp/output_size;
     }
 }
 
@@ -623,16 +628,6 @@ __global__ static void processing(int iter, double * data, int * train_index, do
 	}
 }
 
-double lossfunction(double * output, double * labels, int idx){
-	double l = 0;
-	int i;
-	for(i=0; i<NEU_NUM2; i++){
-		l = l + labels[i + idx*NEU_NUM2] * log(output[i]) + (1 - labels[i + idx*NEU_NUM2])*log(1 - output[i]); 
-        //(output[i] - labels[i + idx*NEU_NUM2]) * (output[i] - labels[i + idx*NEU_NUM2]);
-	}
-	l = -l/NEU_NUM2;
-	return l;
-}
 
 
 // compute correct rate
@@ -672,14 +667,16 @@ void shuffle(int * data, double * labels, int dim_row, int width){
 	srand(time(NULL));
 	for(i=0; i<width; i++){
 		index=rand()%(width-i) + i;
-		if(index != i){
-			for(int j=0; j<dim_row; j++){
+		if ( index != i ) {
+			for ( int j = 0; j < dim_row; j ++ )
+            {
 				temp = data[j + i*dim_row];
 				data[j + i*dim_row] = data[j +index*dim_row];
 				data[j + index*dim_row] = temp;
 			}
 
-			for(int j=0; j<NEU_NUM2; j++){
+			for ( int j = 0; j < NEU_NUM2; j ++ ) 
+            {
 				tmp = labels[j + i*NEU_NUM2];
 				labels[j + i*NEU_NUM2] = labels[j + index*NEU_NUM2];
 				labels[j + index*NEU_NUM2] = tmp;
@@ -709,7 +706,6 @@ double training(double * data, double * labels, int x, int y, int z){
 	}
 	int test_size = (data_size-1)/5 + 1;
 	int train_size = data_size - test_size;
-	//fprintf(stdout,"train_size:%d  test_size:%d\n",train_size,test_size);
 	int * train_index = new int [train_size * (NEIGHBOR + 1)];
 	int * test_index = new int [test_size * (NEIGHBOR+1)];
 
@@ -821,7 +817,6 @@ double training(double * data, double * labels, int x, int y, int z){
 				}
 			}
 
-			//int mid = int(labels[data_index[i]])-1 + te*NEU_NUM2;
 			test_labels[te] = labels[data_index[i]];
 			te = te + 1;
 		}
@@ -883,7 +878,6 @@ double training(double * data, double * labels, int x, int y, int z){
 	checkCudaErrors(cudaMalloc((void**) &gpu_processed_labels, sizeof(double) * train_size * NEU_NUM2));
 	checkCudaErrors(cudaMemcpy(gpu_processed_labels,processed_labels,sizeof(double) * train_size * NEU_NUM2,cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMalloc((void **) &gpu_loss_values, sizeof(double) * DATA_BATCH));
-    //checkCudaErrors(cudaMalloc((void **) &gpu_out_deltaW, sizeof(double) * NEU_NUM1 * NEU_NUM2 * DATA_BATCH));
 
     delete [] processed_labels;
 	
@@ -898,7 +892,7 @@ double training(double * data, double * labels, int x, int y, int z){
  	double cur_min = 1;
 	int count=1;
 	int batch_size = 0;
-	int batch_num = (train_size - 1)/DATA_BATCH + 1;
+	int batch_num = train_size / DATA_BATCH;
 
 	start = clock();
 
@@ -913,25 +907,23 @@ double training(double * data, double * labels, int x, int y, int z){
     Layer fulconnect(pooling_output_length, pooling_output_length * NEU_NUM1, NEU_NUM1, NEU_NUM1, DATA_BATCH, false, false);
 
     Layer out(NEU_NUM1, NEU_NUM1 * NEU_NUM2, NEU_NUM2, NEU_NUM2, DATA_BATCH, false, true);
-    //out.deltaW.data_d = gpu_out_deltaW;
 
     cudaDeviceSynchronize();
     int max_iter = 300;
-    fprintf(stdout, "[Cube CNN training with MBGD Algorithm  Proportion of Training samples: %d%%  max_iter = %d] lr = %lf\n", 80, max_iter, learning_rate);
+    fprintf(stdout, "[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training samples: %d%%  max_iter = %d] lr = %lf\n", DATA_BATCH, 80, max_iter, learning_rate);
 	//creat CUDA streams
 	cudaStream_t stream[DATA_BATCH];
 	for(int i=0; i<DATA_BATCH; i++){
 		cudaStreamCreate(&stream[i]);
 	}    
-	for (int j = 0; j < max_iter; j++ ){
+	for (int iter = 0; iter < max_iter; iter ++ ){
 		loss = 0;
-        clock_t epoch_start = clock();
-		for(int i0=0; i0<batch_num; i0++)
+        clock_t iter_start = clock();
+		for ( int i0 = 0; i0 < batch_num; i0 ++ )
 		{
 			// compute the number of streams(or batch size)
 			batch_size = DATA_BATCH;
-			if ( (i0 + 1 == batch_num) && (train_size % DATA_BATCH != 0) )
-				batch_size = train_size % DATA_BATCH;
+
 			
 			for ( int i1 = 0; i1 < batch_size; i1 ++ )
 			{
@@ -950,7 +942,6 @@ double training(double * data, double * labels, int x, int y, int z){
 
 				maxpooling<<< FILTER_NUM, mre_size, 0, stream[i1] >>>( i1,
                                                                        re_size,
-                                                                       //mre_size, 
                                                                        POOLONG_LEN,
                                                                        FILTER_NUM,
                                                                        conv.output.data_d, 
@@ -977,33 +968,25 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                                           dataLayer.labels.data_d,
                                                                                                           out.deltaB.data_d );
 										
-				// backward propagation
-				/*bp_output<<< 1, NEU_NUM2, 0, stream[i1] >>>( iter, 
-                                                             i0 * DATA_BATCH + i1, 
-                                                             i1,
-                                                             NEU_NUM2, 
-                                                             dataLayer.labels.data_d, 
-                                                             out.output.data_d, 
-                                                             out.deltaB.data_d );
-				*/
+
 				bp_output<<<NEU_NUM1, NEU_NUM2, NEU_NUM2 * sizeof(double), stream[i1]>>>( i1, 
-                                                                                                 NEU_NUM1,
-                                                                                                 NEU_NUM2,
-                                                                                                 out.weights.data_d, 
-                                                                                                 out.deltaB.data_d, 
-                                                                                                 out.deltaW.data_d, 
-                                                                                                 fulconnect.output.data_d, 
-                                                                                                 fulconnect.deltaB.data_d );
+                                                                                          NEU_NUM1,
+                                                                                          NEU_NUM2,
+                                                                                          out.weights.data_d, 
+                                                                                          out.deltaB.data_d, 
+                                                                                          out.deltaW.data_d, 
+                                                                                          fulconnect.output.data_d, 
+                                                                                          fulconnect.deltaB.data_d );
 				
 				bp_fully_connect<<< pooling_output_length, NEU_NUM1, NEU_NUM1 * sizeof(double), stream[i1] >>>( i1,  
-                                                                                     pooling_output_length, 
-                                                                                     NEU_NUM1, 
-                                                                                     pooling.output.data_d, 
-                                                                                     pooling.bias.data_d,
-                                                                                     pooling.deltaB.data_d,
-                                                                                     fulconnect.weights.data_d,
-                                                                                     fulconnect.deltaB.data_d, 
-                                                                                     fulconnect.deltaW.data_d );
+                                                                                                                pooling_output_length, 
+                                                                                                                NEU_NUM1, 
+                                                                                                                fulconnect.weights.data_d,
+                                                                                                                fulconnect.deltaB.data_d, 
+                                                                                                                fulconnect.deltaW.data_d,
+                                                                                                                pooling.output.data_d, 
+                                                                                                                pooling.bias.data_d,
+                                                                                                                pooling.deltaB.data_d );
 				bp_maxpooling<<< 1, pooling_output_length, 0, stream[i1] >>>(i1,
                                                                              pooling_input_length,
                                                                              pooling_output_length,
@@ -1015,7 +998,7 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                                        i1,
                                                                                                        STRIDE,
                                                                                                        (NEIGHBOR + 1),
-                                                                                                       cube_size,
+                                                                                                       z,
                                                                                                        filter_size,
                                                                                                        FILTER_NUM,
                                                                                                        pooling_input_length,
@@ -1024,12 +1007,13 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                                        conv.deltaB.data_d,
                                                                                                        dataLayer.input.data_d );
 
-			}
+			} //i1
 
             cudaDeviceSynchronize();
 
             loss_function<<< 1, batch_size >>>( i0, 
                                                 batch_size, 
+                                                NEU_NUM2,
                                                 out.output.data_d, 
                                                 dataLayer.labels.data_d, 
                                                 gpu_loss_values );
@@ -1037,9 +1021,9 @@ double training(double * data, double * labels, int x, int y, int z){
             checkCudaErrors(cudaMemcpy(loss_values, gpu_loss_values, sizeof(double) * batch_size, cudaMemcpyDeviceToHost));
 			
             cudaDeviceSynchronize();
-			for( int j0 = 0; j0 < batch_size; j0 ++ )
+			for( int j = 0; j < batch_size; j ++ )
             {
-				loss = loss + loss_values[j0];
+				loss = loss + loss_values[j];
 			}
 
 			//update parameters
@@ -1062,26 +1046,10 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                       learning_rate, 
                                                                       fulconnect.weights.data_d, 
                                                                       fulconnect.deltaW.data_d );
-            /*update_fully_connect<<< NEU_NUM2, NEU_NUM1 >>>( batch_size,
-                                                            NEU_NUM1,
-                                                            NEU_NUM2,
-                                                            learning_rate,
-                                                            out.weights.data_d,
-                                                            out.deltaW.data_d,
-                                                            out.bias.data_d,
-                                                            out.deltaB.data_d );
 
-            update_fully_connect<<<NEU_NUM1, pooling_output_length>>>( batch_size,
-                                                                      pooling_output_length,
-                                                                      NEU_NUM1,
-                                                                      learning_rate,
-                                                                      fulconnect.weights.data_d,
-                                                                      fulconnect.deltaW.data_d,
-                                                                      fulconnect.bias.data_d,
-                                                                      fulconnect.deltaB.data_d );
-			*/
 			update_convolution<<< FILTER_NUM, filter_size >>>( batch_size, 
                                                                filter_size,
+                                        
                                                                learning_rate, 
                                                                conv.deltaW.data_d, 
                                                                conv.deltaB.data_d, 
@@ -1089,15 +1057,16 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                conv.bias.data_d );
 	
             checkCudaErrors(cudaMemset(pooling.deltaW.data_d, 0, sizeof(double) * pooling_input_length * DATA_BATCH));    
-        }
+        
+        } //i0
 
-        clock_t epoch_stop = clock();
-        float epoch_time = float(epoch_stop - epoch_start) / CLOCKS_PER_SEC;
+        clock_t iter_stop = clock();
+        float iter_time = float(iter_stop - iter_start) / CLOCKS_PER_SEC;
 		double single_rate = loss/train_size;
-       		logloss[j] = single_rate;
+       		logloss[iter] = single_rate;
 		
-		fprintf(stdout,"[Cube CNN training with MBGD Algorithm  Proportion of Training Samples: %d%%  max_iter = %d  Execution time: %.3f sec] Epoch %d, loss = %lf;\n", 
-                80, max_iter, epoch_time, j + 1, single_rate);
+		fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d  Execution time: %.3f sec] Epoch %d, loss = %lf;\n", 
+                DATA_BATCH, 80, max_iter,  iter_time, iter + 1, single_rate);
         	
 		insert_line(correct_rate, single_rate);//insert current loss into the line
 		double new_min = *min_element(correct_rate, correct_rate + VALID_BATCH);
@@ -1110,16 +1079,16 @@ double training(double * data, double * labels, int x, int y, int z){
         	}
         	if(count >= VALID_BATCH ) {
             		learning_rate = learning_rate * 0.9;
-            		fprintf(stdout,"[Cube CNN training with MBGD Algorithm  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
-                            80, max_iter, learning_rate);
+            		fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
+                            DATA_BATCH, 80, max_iter, learning_rate);
             		count = 1;
             		cur_min = new_min;
         	}
         	if(single_rate < MIN_ERR)
             		break;
-	}
+	} //iter
 
-	fprintf(stdout,"[Cube CNN training with MBGD Algorithm  Proportion of Training Samples: %d%%  max_iter = %d ]", 80, max_iter);
+	fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d ]", DATA_BATCH, 80, max_iter);
 	end = clock();
 	tt = double(end - start);
 	fprintf(stdout," Completed! Global Exesution time is %.3f sec\n", tt/CLOCKS_PER_SEC);
@@ -1176,11 +1145,9 @@ double training(double * data, double * labels, int x, int y, int z){
 	
 	//test
 	double right = 0;
-	double count0 = 0;
-    /*cudaStream_t testStream[test_size]; 
-    for (size_t i=0; i<test_size; i++){
-        cudaStreamCreate(&testStream[i]);
-    }*/
+	double accuracy_count = 0;
+        dataLayer.input.data_d = gpu_processed_test;
+
 
 	for (int i1=0; i1<test_size; i1++){
 		convolution<<< FILTER_NUM, re_size, (cube_size + filter_size) * sizeof(double)/*, testStream[i1]*/ >>>( i1,
@@ -1190,7 +1157,7 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                                                 COV_LEN,
                                                                                                                 FILTER_NUM,
                                                                                                                 STRIDE,
-                                                                                                                gpu_processed_test,
+                                                                                                                dataLayer.input.data_d,
                                                                                                                 conv.weights.data_d,
                                                                                                                 conv.bias.data_d,
                                                                                                                 conv.output.data_d );
@@ -1198,7 +1165,6 @@ double training(double * data, double * labels, int x, int y, int z){
 
 		maxpooling<<< FILTER_NUM, mre_size, 0/*, testStream[i1]*/ >>>( 0,
                                                                        re_size,
-                                                                       //mre_size, 
                                                                        POOLONG_LEN,
                                                                        FILTER_NUM,
                                                                        conv.output.data_d, 
@@ -1223,44 +1189,37 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                                           out.weights.data_d,
                                                                                                           out.bias.data_d,
                                                                                                           out.output.data_d,
-                                                                                                          dataLayer.labels.data_d,
-                                                                                                          out.deltaB.data_d );
+                                                                                                          NULL,
+                                                                                                          NULL );
 		//cudaDeviceSynchronize();
 
 		checkCudaErrors(cudaMemcpy(out.output.data_h, out.output.data_d, sizeof(double) * NEU_NUM2, cudaMemcpyDeviceToHost));
 		cudaDeviceSynchronize();
 
 		right = count_err(test_labels, out.output.data_h, i1);
-		count0 = count0 + right;
+		accuracy_count = accuracy_count + right;
 	}
 
     delete [] test_labels;
 
-    //cudaFree(gpu_processed_train);
-    cudaFree(gpu_processed_test);
-    //cudaFree(gpu_processed_labels);
-    //cudaFree(gpu_out_deltaW);
 
-    /*for (size_t i=0; i<test_size; i++){
-        cudaStreamDestroy(testStream[i]);
-    }*/
 	end = clock();
 	tt = float(end - start);
 	fprintf(stdout, "[Cube CNN testing] Execution time is %.3fs. ", tt/CLOCKS_PER_SEC);
   
-    return count0/test_size;
+    return accuracy_count/test_size;
 }
 
 
 int main(int argc, char * argv[])
 {
-    fprintf(stdout, "[Cube CNN training with MBGD Algorithm] ");
+    fprintf(stdout, "[Cube CNN training with MBGD Algo] ");
   	if(!InitCUDA()){
 		return 0;
 	}
 	printf("CUDA initialized.\n");
 
-    fprintf(stdout, "[Cube CNN training with MBGD Algorithm] Available Device List: ");
+    fprintf(stdout, "[Cube CNN training with MBGD Algo] Available Device List: ");
     int deviceCount;
     cudaGetDeviceCount(&deviceCount);
 
@@ -1269,10 +1228,16 @@ int main(int argc, char * argv[])
     {
         cudaDeviceProp deviceProp;
         cudaGetDeviceProperties(&deviceProp, device);
+        if (device == 0)
+            printf("Device %d -- %s(Default)  ", device, deviceProp.name);
+        else
         printf("Device %d -- %s  ", device, deviceProp.name);
     }
 
     cout<<endl;
+    int device_choosed = 1;
+    fprintf(stdout, "[Cube CNN training with MBGD Algo] Training implemented on Device %d.\n", device_choosed);
+    
     cudaSetDevice(1);
 
 	double *trainset,*trainlabels;
@@ -1293,7 +1258,7 @@ int main(int argc, char * argv[])
 	matClose(datamat);
 
 	double correct = training(trainset, trainlabels, dim[0], dim[1], dim[2]);
-	fprintf(stdout,"Correct Rate: %f%% \n", correct * 100);
+	fprintf(stdout,"Accuracy: %f%% \n", correct * 100);
     
     cudaDeviceReset();
 	return 0;
