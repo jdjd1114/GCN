@@ -17,10 +17,10 @@ const int POOLONG_LEN = 2;
 const int NEU_NUM1 = 100;
 const int NEU_NUM2 = 13;
 const int NEIGHBOR = 8;
-float learning_rate = 0.1;
-const double MIN_ERR = 0.001;
+float learning_rate = 0.02;
+const float MIN_ERR = 0.001;
 const int VALID_BATCH = 5;
-const int DATA_BATCH = 100;
+const int DATA_BATCH = 10;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -120,7 +120,7 @@ void Layer<T>::allocMemcpyCuda(int size, T **data_h, T **data_d, bool isMallocho
         {
             for (int i = 0; i < size; i ++)
             {
-                data_h[0][i] = (2 * (rand()/T(RAND_MAX)) - 1) / 50;
+                data_h[0][i] = (2 * (rand()/T(RAND_MAX)) - 1) / 10;
             }
             checkCudaErrors(cudaMemcpy(*data_d, *data_h, sizeBytes, cudaMemcpyHostToDevice));
         }
@@ -422,7 +422,6 @@ __global__ static void bp_fully_connect( int batch_id,
 		}
 
         float data_tmp = data[bid + batch_id * input_size];
-        //int data_index_tmp = data_index[bid + batch_id * input_size];
 
 		deltaW[tid + bid * output_size + batch_id * input_size * output_size] = data_tmp *
                                                                            pre_deltaB[tid + batch_id * output_size];
@@ -479,8 +478,8 @@ __global__ static void bp_convolution( int data_id,
 		for(int i = 0; i < re_size; i++){
 			//idx = int(pool_index[i + bid * mre_size + batch_id * mre_size * FILTER_NUM]);
 			//h = (idx % re_size) * (NEIGHBOR + 1) * stride;
-			mid0 = mid0 + pre_deltaB[i + bid * re_size + batch_id * re_size * filter_num] * data_tmp[tid + i * perLayerSize * stride];
-			mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * re_size * filter_num];
+			mid0 = mid0 + pre_deltaB[i + bid * re_size + batch_id * output_size] * data_tmp[tid + i * perLayerSize * stride];
+			mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * output_size];
 		}
 
 		deltaW[tid + bid * filter_size + batch_id * filter_size * filter_num] = mid0 / re_size;
@@ -519,7 +518,7 @@ __global__ static void update_bias( int batch_size,
 		}
 
 		if(tid < 1)
-			bias[bid] = bias[bid] - tmp[0] * lr / batch_size;
+			bias[bid] = bias[bid] - tmp[0] * lr ;
 	}
 }
 // fully_connect layer
@@ -535,14 +534,14 @@ __global__ static void update_fully_connect( int batch_size,
 	if ( tid < NEU_NUM2 && bid < NEU_NUM1 )
     {
 		float mid0 = 0, mid1 = 0;
-		for(int i=0; i<batch_size; i++){
+		for ( int i = 0; i < batch_size; i ++ ) {
 			mid0 = mid0 + pre_deltaW[tid + bid * NEU_NUM2 + i * NEU_NUM1 * NEU_NUM2];
 			mid1 = mid1 + pre_deltaB[bid + i * NEU_NUM1];
 		}
-		pre_weights[tid + bid*NEU_NUM2] = pre_weights[tid + bid] - lr * mid0/batch_size;
+		pre_weights[tid + bid * NEU_NUM2] = pre_weights[tid + bid * NEU_NUM2] - lr * mid0 ;
 		
-		if(tid < 1){
-			bias[bid] = bias[bid] - lr * mid1 / batch_size;
+		if ( tid < 1 ) {
+			bias[bid] = bias[bid] - lr * mid1 ;
 		}
 	}
 }
@@ -564,7 +563,7 @@ __global__ static void update_weights( int batch_size,
 			mid = mid + pre_deltaW[tid + bid * output_size + i * input_size * output_size];
 		}
 		
-		pre_weights[tid + bid * output_size] = pre_weights[tid + bid * output_size] - lr * mid / batch_size;
+		pre_weights[tid + bid * output_size] = pre_weights[tid + bid * output_size] - lr * mid ;
 	}
 }
 
@@ -582,34 +581,40 @@ __global__ static void update_convolution( int batch_size,
 	if ( tid < filter_size && bid < FILTER_NUM )
 	{
 		float mid0 = 0, mid1 = 0;
-		for(int i=0; i<batch_size; i++){
+		for ( int i = 0; i < batch_size; i ++ ) {
 			mid0 = mid0 + deltaW[tid + bid * filter_size + i * filter_size * FILTER_NUM];
-			mid1 = mid1 + deltaB[bid + i*FILTER_NUM];
+			mid1 = mid1 + deltaB[bid + i * FILTER_NUM];
 		}
-		filters[tid + bid * filter_size] = filters[tid + bid * filter_size] - lr * mid0 / batch_size;
+
+		filters[tid + bid * filter_size] = filters[tid + bid * filter_size] - lr * mid0 ;
 		
-		if(tid < 1){
-			bias[bid] = bias[bid] - lr * mid1 / batch_size;
+		if ( tid < 1 ) {
+			bias[bid] = bias[bid] - lr * mid1 ;
 		}	
 	}
 }
 
-__global__ static void loss_function(int batch_id, int batch_size, float * O2, int * labels, double * loss_values)
+__global__ static void loss_function ( int batch_id, 
+                                       int batch_size, 
+                                       int output_size,
+                                       float * output, 
+                                       int * labels, 
+                                       double * loss_values)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
     double sum = 0.0;
     double tmp = 0.0;
     if(tid < batch_size){
-        for(size_t i=0; i<NEU_NUM2; i++){
+        for ( int i = 0; i < output_size; i ++ ) {
 
-            tmp = labels[i + (batch_id * DATA_BATCH + tid) * NEU_NUM2] * log(double(O2[i + tid * NEU_NUM2])) +
-                  (1 - labels[i + (batch_id * DATA_BATCH + tid) * NEU_NUM2]) * log(double(1 - O2[i + tid * NEU_NUM2]));
+            tmp = labels[i + (batch_id * batch_size + tid) * output_size] * log(double(output[i + tid * output_size])) +
+                  (1 - labels[i + (batch_id * batch_size + tid) * output_size]) * log(double(1 - output[i + tid * output_size]));
 
             sum = sum + tmp;
         }
 
-        loss_values[tid] = -sum/NEU_NUM2;
+        loss_values[tid] = - sum / output_size;
     }
 }
 
@@ -631,18 +636,6 @@ __global__ static void processing(int iter, float * data, int * train_index, flo
 		}
 	}
 }
-
-double lossfunction(double * output, double * labels, int idx){
-	double l = 0;
-	int i;
-	for(i=0; i<NEU_NUM2; i++){
-		l = l + labels[i + idx*NEU_NUM2] * log(output[i]) + (1 - labels[i + idx*NEU_NUM2])*log(1 - output[i]); 
-        //(output[i] - labels[i + idx*NEU_NUM2]) * (output[i] - labels[i + idx*NEU_NUM2]);
-	}
-	l = -l/NEU_NUM2;
-	return l;
-}
-
 
 // compute correct rate
 float count_err(int * test_labels, float * output, int test_idx)
@@ -906,7 +899,7 @@ float training(float * data, double * labels, int x, int y, int z){
  	float cur_min = 1;
 	int count=1;
 	int batch_size = 0;
-	int batch_num = (train_size - 1)/DATA_BATCH + 1;
+	int batch_num = train_size / DATA_BATCH;
 
 	start = clock();
 
@@ -938,8 +931,6 @@ float training(float * data, double * labels, int x, int y, int z){
 		{
 			// compute the number of streams(or batch size)
 			batch_size = DATA_BATCH;
-			if ( (i0 + 1 == batch_num) && (train_size % DATA_BATCH != 0) )
-				batch_size = train_size % DATA_BATCH;
 			
 			for ( int i1 = 0; i1 < batch_size; i1 ++ )
 			{
@@ -985,15 +976,6 @@ float training(float * data, double * labels, int x, int y, int z){
                                                                                                           dataLayer.labels.data_d,
                                                                                                           out.deltaB.data_d );
 										
-				// backward propagation
-				/*bp_output<<< 1, NEU_NUM2, 0, stream[i1] >>>( iter, 
-                                                             i0 * DATA_BATCH + i1, 
-                                                             i1,
-                                                             NEU_NUM2, 
-                                                             dataLayer.labels.data_d, 
-                                                             out.output.data_d, 
-                                                             out.deltaB.data_d );
-				*/
 				bp_output<<<NEU_NUM1, NEU_NUM2, NEU_NUM2 * sizeof(float), stream[i1]>>>( i1, 
                                                                                                  NEU_NUM1,
                                                                                                  NEU_NUM2,
@@ -1038,6 +1020,7 @@ float training(float * data, double * labels, int x, int y, int z){
 
             loss_function<<< 1, batch_size >>>( i0, 
                                                 batch_size, 
+                                                NEU_NUM2,
                                                 out.output.data_d, 
                                                 dataLayer.labels.data_d, 
                                                 gpu_loss_values );
@@ -1047,8 +1030,8 @@ float training(float * data, double * labels, int x, int y, int z){
             cudaDeviceSynchronize();
 			for( int j0 = 0; j0 < batch_size; j0 ++ )
             {
-                if ( isnan(loss_values[j0]) )
-                    loss_values[j0] = 0.00001;
+                //if ( isnan(loss_values[j0]) )
+                //    loss_values[j0] = 0.001;
 
 				loss = loss + loss_values[j0];
 			}
@@ -1073,25 +1056,8 @@ float training(float * data, double * labels, int x, int y, int z){
                                                                       learning_rate, 
                                                                       fulconnect.weights.data_d, 
                                                                       fulconnect.deltaW.data_d );
-            /*update_fully_connect<<< NEU_NUM2, NEU_NUM1 >>>( batch_size,
-                                                            NEU_NUM1,
-                                                            NEU_NUM2,
-                                                            learning_rate,
-                                                            out.weights.data_d,
-                                                            out.deltaW.data_d,
-                                                            out.bias.data_d,
-                                                            out.deltaB.data_d );
-
-            update_fully_connect<<<NEU_NUM1, pooling_output_length>>>( batch_size,
-                                                                      pooling_output_length,
-                                                                      NEU_NUM1,
-                                                                      learning_rate,
-                                                                      fulconnect.weights.data_d,
-                                                                      fulconnect.deltaW.data_d,
-                                                                      fulconnect.bias.data_d,
-                                                                      fulconnect.deltaB.data_d );
-			*/
-			update_convolution<<< FILTER_NUM, filter_size >>>( batch_size, 
+			
+            update_convolution<<< FILTER_NUM, filter_size >>>( batch_size, 
                                                                filter_size,
                                                                learning_rate, 
                                                                conv.deltaW.data_d, 
