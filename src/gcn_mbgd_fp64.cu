@@ -20,7 +20,7 @@ const int NEIGHBOR = 8;
 double learning_rate = 0.2;
 const double MIN_ERR = 0.001;
 const int VALID_BATCH = 5;
-const int DATA_BATCH = 10;
+const int DATA_BATCH = 100;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -47,15 +47,17 @@ bool InitCUDA(){
 	return true;
 }
 
+template<typename T>
 struct Tensor{
     int length;
-    double * data_h;
-    double * data_d;
+    T * data_h;
+    T * data_d;
 
     Tensor();
 };
 
-Tensor::Tensor()
+template<typename T>
+Tensor<T>::Tensor()
 {
     length = 0;
     data_h = NULL;
@@ -63,8 +65,8 @@ Tensor::Tensor()
 }
 
 struct DataLayer{
-    Tensor input;
-    Tensor labels;
+    Tensor<double> input;
+    Tensor<int> labels;
 
     DataLayer(int input_size, int labels_size);
     ~DataLayer();
@@ -89,12 +91,12 @@ DataLayer::~DataLayer()
 }
 
 struct Layer{
-    Tensor input;
-    Tensor output;
-    Tensor weights;
-    Tensor bias;
-    Tensor deltaW;
-    Tensor deltaB;
+    Tensor<double> input;
+    Tensor<double> output;
+    Tensor<double> weights;
+    Tensor<double> bias;
+    Tensor<double> deltaW;
+    Tensor<double> deltaB;
 
     Layer(int input_size, int weights_size, int bias_size, int output_size, int batch_size, bool isMaxpooling, bool copyback);
     ~Layer();
@@ -307,7 +309,7 @@ __global__ static void output_and_dvalue( int data_id,
                                           double * weights, 
                                           double * bias, 
                                           double * output,
-                                          double * labels,
+                                          int * labels,
                                           double * dValue )
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -532,7 +534,7 @@ __global__ static void update_fully_connect( int batch_size,
 			mid0 = mid0 + pre_deltaW[tid + bid * NEU_NUM2 + i * NEU_NUM1 * NEU_NUM2];
 			mid1 = mid1 + pre_deltaB[bid + i * NEU_NUM1];
 		}
-		pre_weights[tid + bid*NEU_NUM2] = pre_weights[tid + bid] - lr * mid0/batch_size;
+		pre_weights[tid + bid * NEU_NUM2] = pre_weights[tid + bid * NEU_NUM2] - lr * mid0 / batch_size;
 		
 		if(tid < 1){
 			bias[bid] = bias[bid] - lr * mid1 / batch_size;
@@ -590,10 +592,10 @@ __global__ static void update_convolution( int batch_size,
 
 __global__ static void loss_function( int batch_id, 
                                       int batch_size, 
-				      int output_size,
-				      double * output, 
-				      double * labels, 
-				      double * loss_values)
+                                      int output_size,
+                                      double * output, 
+                                      int * labels, 
+                                      double * loss_values)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -660,7 +662,7 @@ void insert_line(double * a, double b){
 }
 
 // shuffle
-void shuffle(int * data, double * labels, int dim_row, int width){
+void shuffle(int * data, int * labels, int dim_row, int width){
 	int index,  i;
 	int temp;
 	double tmp;
@@ -693,23 +695,23 @@ double training(double * data, double * labels, int x, int y, int z){
 	double * gpu_processed_test;//extracted test samples
 	int * gpu_train_index;//index of train samples and their neighbors
 	int * gpu_test_index;//index of test samples
-	double * gpu_processed_labels;//encoded train labels
+	int * gpu_processed_labels;//encoded train labels
 
 	//preprocessing
 	int data_size = 0;
 	int * data_index = new int [x*y];
-	for(int i=0; i<x*y; i++){
-		if(labels[i] != 0){
+	for ( int i = 0; i < x * y; i ++ ) {
+		if ( labels[i] != 0 ) {
 			data_index[data_size]=i;
 			data_size ++;
 		}
 	}
-	int test_size = (data_size-1)/5 + 1;
+	int test_size = (data_size - 1) / 5 + 1;
 	int train_size = data_size - test_size;
 	int * train_index = new int [train_size * (NEIGHBOR + 1)];
 	int * test_index = new int [test_size * (NEIGHBOR+1)];
 
-	double * processed_labels = new double [train_size * NEU_NUM2]();
+	int * processed_labels = new int [train_size * NEU_NUM2]();
 	double * test_labels = new double [test_size]();
 
 	int tr=0, te=0;
@@ -822,7 +824,7 @@ double training(double * data, double * labels, int x, int y, int z){
 		}
 	}
 
-	shuffle(train_index, processed_labels, (NEIGHBOR+1), train_size);//shuffle the samples in training set
+	shuffle(train_index, processed_labels, (NEIGHBOR + 1), train_size);//shuffle the samples in training set
 
 	//malloc GPU memory, copy data to GPU
 	checkCudaErrors(cudaMalloc((void **) &gpu_data, sizeof(double) * x * y * z));
@@ -875,8 +877,8 @@ double training(double * data, double * labels, int x, int y, int z){
     //double * gpu_out_deltaW;
 
 	// copy labels to GPU
-	checkCudaErrors(cudaMalloc((void**) &gpu_processed_labels, sizeof(double) * train_size * NEU_NUM2));
-	checkCudaErrors(cudaMemcpy(gpu_processed_labels,processed_labels,sizeof(double) * train_size * NEU_NUM2,cudaMemcpyHostToDevice));
+	checkCudaErrors(cudaMalloc((void**) &gpu_processed_labels, sizeof(int) * train_size * NEU_NUM2));
+	checkCudaErrors(cudaMemcpy(gpu_processed_labels, processed_labels, sizeof(int) * train_size * NEU_NUM2,cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMalloc((void **) &gpu_loss_values, sizeof(double) * DATA_BATCH));
 
     delete [] processed_labels;
