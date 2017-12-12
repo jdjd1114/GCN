@@ -648,20 +648,6 @@ __global__ static void processing(int iter, double * data, int * train_index, do
 	}
 }
 
-/*double lossfunction(double * output, double * labels, int idx){
-	double l = 0;
-
-	for ( int i=0; i < NEU_NUM2; i ++ ) 
-    {
-		l = l + labels[i + idx * NEU_NUM2] * log(output[i]) + (1 - labels[i + idx * NEU_NUM2]) * log(1 - output[i]);
-        //(output[i] - labels[i + idx*NEU_NUM2]) * (output[i] - labels[i + idx*NEU_NUM2]);
-	}
-
-	l = -l / NEU_NUM2;
-	return l;
-}*/
-
-
 // compute correct rate
 double count_err(double * test_labels, double * output, int test_idx)
 {
@@ -736,7 +722,6 @@ double training(double * data, double * labels, int x, int y, int z){
 	}
 	int test_size = (data_size-1)/5 + 1;
 	int train_size = data_size - test_size;
-	//fprintf(stdout,"train_size:%d  test_size:%d\n",train_size,test_size);
 	int * train_index = new int [train_size * (NEIGHBOR + 1)];
 	int * test_index = new int [test_size * (NEIGHBOR+1)];
 
@@ -744,9 +729,9 @@ double training(double * data, double * labels, int x, int y, int z){
 	double * test_labels = new double [test_size]();
 
 	int tr=0, te=0;
-	for (int i=0; i<data_size; i++){
-		if (i%5 != 0){
-			train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1)] = data_index[i];//index of current labeled pixel
+	for ( int i = 0; i < data_size; i ++ ) {
+		if ( i % 5 != 0 ) {
+			train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1)] = data_index[i]; // index of current labeled pixel
 			if(NEIGHBOR == 4)
 			{
 				train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = data_index[i] - 1;
@@ -755,41 +740,41 @@ double training(double * data, double * labels, int x, int y, int z){
 				train_index[NEIGHBOR + tr * (NEIGHBOR+1)] = data_index[i] + x;
 				
 
-				if((data_index[i] % x) == 0){//first row
+				if( (data_index[i] % x) == 0 ) { // first row
 					train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1];
 				}
-				if((data_index[i] % x) == (x-1)){//last row
+				if( (data_index[i] % x ) == (x-1) ) { // last row
 					train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1] = train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1];
 				}
-				if((data_index[i]/x) == 0){//first column
+				if( (data_index[i] / x) == 0 ) { // first column
 					train_index[0 + tr * (NEIGHBOR+1)] = train_index[NEIGHBOR + tr * (NEIGHBOR+1)];
 				}
-				if((data_index[i]/x) == (y-1)){//last column
+				if( (data_index[i] / x) == (y-1) ) {//last column
 					train_index[NEIGHBOR + tr * (NEIGHBOR+1)] = train_index[0 + tr * (NEIGHBOR+1)];
 				}
 			}
-			if(NEIGHBOR == 8)
+			if ( NEIGHBOR == 8 )
 			{
 				train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = data_index[i] - 1;
 				train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-				for(int j0=0;j0<3;j0++){
+				for ( int j0 = 0; j0 < 3; j0 ++ ) {
 					train_index[j0 + tr * (NEIGHBOR+1)] = data_index[i] - 1 - x + j0;
 					train_index[j0+6 + tr * (NEIGHBOR+1)] = data_index[i] - 1 + x + j0;
 				}
 
-				if((data_index[i] % x) == 0){//first row
+				if((data_index[i] % x) == 0){ // first row
 					for (int j=0; j<3; j++)
 						train_index[j*3 + tr*(NEIGHBOR+1)] = train_index[j*3+2 + tr*(NEIGHBOR+1)];
 				}
-				if((data_index[i] % x) == (x-1)){//last row
+				if((data_index[i] % x) == (x-1)){ // last row
 					for(int j=0;j<3;j++)
 							train_index[j*3+2 + tr*(NEIGHBOR+1)] = train_index[j*3 + tr*(NEIGHBOR+1)];
 				}
-				if((data_index[i]/x) == 0){//first column
+				if((data_index[i]/x) == 0){ // first column
 					for(int j=0;j<3;j++)
 						train_index[j + tr*(NEIGHBOR+1)] = train_index[j+6 + tr*(NEIGHBOR+1)];
 				}
-				if((data_index[i]/x) == (y-1)){//last column
+				if((data_index[i]/x) == (y-1)){ // last column
 					for(int j=0;j<3;j++)
 						train_index[j+6  + tr*(NEIGHBOR+1)] = train_index[j + tr*(NEIGHBOR+1)];
 				}
@@ -799,8 +784,8 @@ double training(double * data, double * labels, int x, int y, int z){
 			processed_labels[mid] = 1;
 			tr = tr + 1;
 		}
-		if(i%5 == 0){
-			test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1)] = data_index[i];//index of current labeled pixel
+		if( i % 5 == 0 ) {
+			test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1)] = data_index[i]; // index of current labeled pixel
 			if(NEIGHBOR == 4)
 			{
 				test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = data_index[i] - 1;
@@ -808,20 +793,20 @@ double training(double * data, double * labels, int x, int y, int z){
 				test_index[0 + te * (NEIGHBOR+1)] = data_index[i] - x;
 				test_index[NEIGHBOR+ te * (NEIGHBOR+1)] = data_index[i] + x;
 
-				if((data_index[i] % x) == 0){//first row
+				if((data_index[i] % x) == 0){ // first row
 					test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1];
 				}
-				if((data_index[i] % x) == (x-1)){//last row
+				if((data_index[i] % x) == (x-1)){ // last row
 					test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1] = test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1];
 				}
-				if((data_index[i]/x) == 0){//first column
+				if((data_index[i]/x) == 0){ // first column
 					test_index[0 + te * (NEIGHBOR+1)] = test_index[NEIGHBOR+ te * (NEIGHBOR+1)];
 				}
-				if((data_index[i]/x) == (y-1)){//last column
+				if((data_index[i]/x) == (y-1)){ // last column
 					test_index[NEIGHBOR+ te * (NEIGHBOR+1)] = test_index[0 + te * (NEIGHBOR+1)];
 				}
 			}
-			if(NEIGHBOR == 8)
+			if ( NEIGHBOR == 8 )
 			{
 				test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = data_index[i] - 1;
 				test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1] = data_index[i] + 1;
@@ -830,25 +815,24 @@ double training(double * data, double * labels, int x, int y, int z){
 					test_index[j0+6 + te * (NEIGHBOR+1)] = data_index[i] - 1 + x + j0;
 				}
 
-				if((data_index[i] % x) == 0){//first row
+				if((data_index[i] % x) == 0){ // first row
 					for (int j=0; j<3; j++)
 						test_index[j*3 + te*(NEIGHBOR+1)] = test_index[j*3+2 + te*(NEIGHBOR+1)];
 				}
-				if((data_index[i] % x) == (x-1)){//last row
+				if((data_index[i] % x) == (x-1)){ // last row
 					for(int j=0;j<3;j++)
 						test_index[j*3+2 + te*(NEIGHBOR+1)] = test_index[j*3 + te*(NEIGHBOR+1)];
 				}
-				if((data_index[i]/x) == 0){//first column
+				if((data_index[i]/x) == 0){ // first column
 					for(int j=0;j<3;j++)
 						test_index[j + te*(NEIGHBOR+1)] = test_index[j+6 + te*(NEIGHBOR+1)];
 				}
-				if((data_index[i]/x) == (y-1)){//last column
+				if((data_index[i]/x) == (y-1)){ // last column
 					for(int j=0;j<3;j++)
 						test_index[j+6  + te*(NEIGHBOR+1)] = test_index[j + te*(NEIGHBOR+1)];
 				}
 			}
 
-			//int mid = int(labels[data_index[i]])-1 + te*NEU_NUM2;
 			test_labels[te] = labels[data_index[i]];
 			te = te + 1;
 		}
@@ -898,8 +882,8 @@ double training(double * data, double * labels, int x, int y, int z){
 	int mre_size = (re_size-1) / POOLONG_LEN + 1;
     int pooling_input_length = re_size * FILTER_NUM;
     int pooling_output_length = mre_size * FILTER_NUM;
-	int ful_weights_size = pooling_output_length * NEU_NUM1;// Weights in full connection layer
-	int out_weights_size = NEU_NUM1 * NEU_NUM2;// Weights in output layer
+	int ful_weights_size = pooling_output_length * NEU_NUM1;    // Weights in full connection layer
+	int out_weights_size = NEU_NUM1 * NEU_NUM2;                 // Weights in output layer
     int filter_size = (NEIGHBOR + 1) * COV_LEN;
     int cube_size = (NEIGHBOR + 1) * z;
 	
@@ -940,22 +924,23 @@ double training(double * data, double * labels, int x, int y, int z){
     Layer out(NEU_NUM1, NEU_NUM1 * NEU_NUM2, NEU_NUM2, NEU_NUM2, DATA_BATCH, false, true);
 
     cudaDeviceSynchronize();
+    
     int max_iter = 300;
     fprintf(stdout, "[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training samples: %d%%  max_iter = %d] lr = %lf\n", DATA_BATCH, 80, max_iter, learning_rate);
-	//creat CUDA streams
+	
+    // creat CUDA streams
 	cudaStream_t stream[DATA_BATCH];
-	for(int i=0; i<DATA_BATCH; i++){
+	for ( int i = 0; i < DATA_BATCH; i ++ ) {
 		cudaStreamCreate(&stream[i]);
 	}    
-	for (int j = 0; j < max_iter; j++ ){
+
+	for ( int iter = 0; iter < max_iter; iter ++ ){
 		loss = 0;
-        clock_t epoch_start = clock();
+        clock_t iter_start = clock();
 		for ( int i0 = 0; i0 < batch_num; i0 ++ )
 		{
 			// compute the number of streams(or batch size)
 			batch_size = DATA_BATCH;
-			//if ( (i0 + 1 == batch_num) && (train_size % DATA_BATCH != 0) )
-			//	batch_size = train_size % DATA_BATCH;
 			
 			for ( int i1 = 0; i1 < batch_size; i1 ++ )
 			{
@@ -1053,9 +1038,9 @@ double training(double * data, double * labels, int x, int y, int z){
             checkCudaErrors(cudaMemcpy(loss_values, gpu_loss_values, sizeof(double) * batch_size, cudaMemcpyDeviceToHost));
 			
             cudaDeviceSynchronize();
-			for ( int j0 = 0; j0 < batch_size; j0 ++ )
+			for ( int j = 0; j < batch_size; j ++ )
             {
-				loss = loss + loss_values[j0];
+				loss = loss + loss_values[j];
 			}
 
 			//update parameters
@@ -1092,15 +1077,15 @@ double training(double * data, double * labels, int x, int y, int z){
 		
         } //i0
 
-        clock_t epoch_stop = clock();
-        float epoch_time = float(epoch_stop - epoch_start) / CLOCKS_PER_SEC;
+        clock_t iter_stop = clock();
+        float iter_time = float(iter_stop - iter_start) / CLOCKS_PER_SEC;
 		double single_rate = loss/train_size;
-       		logloss[j] = single_rate;
+        logloss[iter] = single_rate;
 		
 		fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d  Execution time: %.3f sec] Epoch %d, loss = %lf;\n", 
-                DATA_BATCH, 80, max_iter, epoch_time, j + 1, single_rate);
+                DATA_BATCH, 80, max_iter, iter_time, iter + 1, single_rate);
         	
-		insert_line(correct_rate, single_rate);//insert current loss into the line
+		insert_line(correct_rate, single_rate); // insert current loss into the line
 		double new_min = *min_element(correct_rate, correct_rate + VALID_BATCH);
         	if(cur_min > new_min){
             		cur_min = new_min;
@@ -1118,7 +1103,7 @@ double training(double * data, double * labels, int x, int y, int z){
         	}
         	if(single_rate < MIN_ERR)
             		break;
-	} //j
+	} // iter
 
 	fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d ]", DATA_BATCH, 80, max_iter);
 	end = clock();
@@ -1177,14 +1162,10 @@ double training(double * data, double * labels, int x, int y, int z){
 	
 	//test
 	double right = 0;
-	double count0 = 0;
-    /*cudaStream_t testStream[test_size]; 
-    for (size_t i=0; i<test_size; i++){
-        cudaStreamCreate(&testStream[i]);
-    }*/
+	double accuracy_count = 0;
     dataLayer.input.data_d = gpu_processed_test;
 
-	for (int i1=0; i1<test_size; i1++){
+	for ( int i1 = 0; i1 < test_size; i1 ++ ) {
 		convolution<<< FILTER_NUM, re_size, (cube_size + filter_size) * sizeof(double)/*, testStream[i1]*/ >>>( i1,
                                                                                                                 0,
                                                                                                                 (NEIGHBOR + 1),
@@ -1200,7 +1181,6 @@ double training(double * data, double * labels, int x, int y, int z){
 
 		maxpooling<<< FILTER_NUM, mre_size, 0/*, testStream[i1]*/ >>>( 0,
                                                                        re_size,
-                                                                       //mre_size, 
                                                                        POOLONG_LEN,
                                                                        FILTER_NUM,
                                                                        conv.output.data_d, 
@@ -1233,19 +1213,16 @@ double training(double * data, double * labels, int x, int y, int z){
 		cudaDeviceSynchronize();
 
 		right = count_err(test_labels, out.output.data_h, i1);
-		count0 = count0 + right;
+		accuracy_count = accuracy_count + right;
 	}
 
     delete [] test_labels;
 
-    /*for (size_t i=0; i<test_size; i++){
-        cudaStreamDestroy(testStream[i]);
-    }*/
 	end = clock();
 	tt = float(end - start);
 	fprintf(stdout, "[Cube CNN testing] Execution time is %.3fs. ", tt/CLOCKS_PER_SEC);
   
-    return count0/test_size;
+    return accuracy_count/test_size;
 }
 
 
@@ -1266,10 +1243,15 @@ int main(int argc, char * argv[])
     {
         cudaDeviceProp deviceProp;
         cudaGetDeviceProperties(&deviceProp, device);
-        printf("Device %d -- %s  ", device, deviceProp.name);
+        if (device == 0)
+            printf("Device %d -- %s(Default)  ", device, deviceProp.name);
+        else
+            printf("Device %d -- %s  ", device, deviceProp.name);
     }
-
     cout<<endl;
+
+    int device_choosed = 1;
+    fprintf(stdout, "[Cube CNN training with MBGD Algo] Training implemented on Device %d.\n", device_choosed);
     cudaSetDevice(1);
 
 	double *trainset,*trainlabels;
@@ -1290,7 +1272,7 @@ int main(int argc, char * argv[])
 	matClose(datamat);
 
 	double correct = training(trainset, trainlabels, dim[0], dim[1], dim[2]);
-	fprintf(stdout,"Correct Rate: %f%% \n", correct * 100);
+	fprintf(stdout,"Accuracy: %f%% \n", correct * 100);
     
     cudaDeviceReset();
 	return 0;
