@@ -17,10 +17,10 @@ const int POOLONG_LEN = 2;
 const int NEU_NUM1 = 100;
 const int NEU_NUM2 = 13;
 const int NEIGHBOR = 8;
-float learning_rate = 0.08;
+float learning_rate = 0.06;
 const float MIN_ERR = 0.001;
 const int VALID_BATCH = 5;
-const int DATA_BATCH = 10;
+const int DATA_BATCH = 50;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -330,7 +330,8 @@ __global__ static void output_and_dvalue( int data_id,
 			mid = mid + weights[tid + i * neuron_num] * tmp[i];
 		}
 
-		tmp[tid + input_size] = exp(mid + bias[tid]);
+        mid = exp(mid + bias[tid]);
+		tmp[tid + input_size] = mid;
 		__syncthreads(); 
 
 		int length = neuron_num;
@@ -345,7 +346,7 @@ __global__ static void output_and_dvalue( int data_id,
 			__syncthreads();
 		}
 
-		output[tid + batch_id * neuron_num] = exp(mid + bias[tid]) / tmp[input_size];
+		output[tid + batch_id * neuron_num] = mid / tmp[input_size];
         
         if ( isBackwardPropagation )
             dValue[tid + batch_id * neuron_num] = (output[tid + batch_id * neuron_num] - labels[tid + data_id * neuron_num]) / neuron_num;
@@ -356,13 +357,13 @@ __global__ static void output_and_dvalue( int data_id,
 // backward propagation kernels
 // output layer
 __global__ static void bp_output( int batch_id,
-                                         int input_size,
-                                         int output_size, 
-                                         float * weights, 
-                                         float * deltaB, 
-                                         float * deltaW,
-                                         float * data, 
-                                         float * fol_deltaZ )
+                                  int input_size,
+                                  int output_size, 
+                                  float * weights, 
+                                  float * deltaB, 
+                                  float * deltaW,
+                                  float * data, 
+                                  float * fol_deltaZ )
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
@@ -394,14 +395,14 @@ __global__ static void bp_output( int batch_id,
 
 // maxpooling layer
 __global__ static void bp_fully_connect( int batch_id, 
-                                      int input_size, 
-                                      int output_size,
-                                      float * weights,
-                                      float * deltaB,
-                                      float * deltaW,
-                                      float * data,
-                                      float * data_index,
-                                      float * fol_deltaZ )
+                                         int input_size, 
+                                         int output_size,
+                                         float * weights,
+                                         float * deltaB,
+                                         float * deltaW,
+                                         float * data,
+                                         float * data_index,
+                                         float * fol_deltaZ )
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
@@ -490,85 +491,41 @@ __global__ static void bp_convolution( int data_id,
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // update params kernels
-// output layer
-__global__ static void update_bias( int batch_size,
-                                      int output_size, 
-                                      float lr, 
-                                      float * pre_deltaB, 
-                                      float * bias )
-{
-	int tid = threadIdx.x;
-	int bid = blockIdx.x;
-	if(tid < batch_size && bid < output_size)
-    {
-		extern __shared__ float tmp[];
-		tmp[tid] = pre_deltaB[bid + tid * output_size];
-		__syncthreads();
-
-		int length = batch_size;
-		int offset = (length - 1)/2 + 1;
-		while(length >= 2){
-			if(tid + offset < length){
-				tmp[tid] = tmp[tid] + tmp[tid + offset];
-			}
-			length = (length - 1)/2 + 1;
-			offset = (offset - 1)/2 + 1;
-			__syncthreads();
-		}
-
-		if(tid < 1)
-			bias[bid] = bias[bid] - tmp[0] * lr ;
-	}
-}
-// fully_connect layer
 __global__ static void update_fully_connect( int batch_size, 
+                                             int input_size,
+					                          int output_size,
                                              float lr, 
-                                             float * pre_weights,
-                                             float * pre_deltaW,
+                                             float * weights, 
+                                             float * deltaW,
                                              float * bias,
-                                             float * pre_deltaB )
+                                             float * deltaB )
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
-	if ( tid < NEU_NUM2 && bid < NEU_NUM1 )
+    if ( tid < output_size && bid < input_size )
     {
-		float mid0 = 0, mid1 = 0;
-		for ( int i = 0; i < batch_size; i ++ ) {
-			mid0 = mid0 + pre_deltaW[tid + bid * NEU_NUM2 + i * NEU_NUM1 * NEU_NUM2];
-			mid1 = mid1 + pre_deltaB[bid + i * NEU_NUM1];
-		}
-		pre_weights[tid + bid * NEU_NUM2] = pre_weights[tid + bid * NEU_NUM2] - lr * mid0 ;
-		
-		if ( tid < 1 ) {
-			bias[bid] = bias[bid] - lr * mid1 ;
-		}
-	}
-}
-// maxpooling layer
-__global__ static void update_weights( int batch_size,
-                                          int input_size,
-                                          int output_size, 
-                                          float lr, 
-                                          float * pre_weights, 
-                                          float * pre_deltaW )
-{
-	int tid = threadIdx.x;
-	int bid = blockIdx.x;
-	if ( tid < output_size && bid < input_size )
-    {
-		float mid=0;
-		for ( int i = 0; i < batch_size; i ++ )
+        double tmp0 = 0, tmp1 = 0;
+        for ( int i = 0; i < batch_size; i ++ )
         {
-			mid = mid + pre_deltaW[tid + bid * output_size + i * input_size * output_size];
-		}
-		
-		pre_weights[tid + bid * output_size] = pre_weights[tid + bid * output_size] - lr * mid ;
-	}
+            tmp0 = tmp0 + deltaW[tid + bid * output_size + i * input_size * output_size]; 
+        }
+
+        weights[tid + bid * output_size] = weights[tid + bid * output_size] - lr * tmp0;
+
+        if ( bid < 1 ) {
+            for ( int j = 0; j < batch_size; j++ )
+                tmp1 = tmp1 + deltaB[tid + j * output_size];
+
+            bias[tid] = bias[tid] - lr * tmp1;
+        }
+    }
 }
+
 
 // convolution layer
 __global__ static void update_convolution( int batch_size, 
                                            int filter_size,
+                                           int filter_num,
                                            float lr, 
                                            float * deltaW, 
                                            float * deltaB, 
@@ -577,12 +534,12 @@ __global__ static void update_convolution( int batch_size,
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
-	if ( tid < filter_size && bid < FILTER_NUM )
+	if ( tid < filter_size && bid < filter_num )
 	{
 		float mid0 = 0, mid1 = 0;
 		for ( int i = 0; i < batch_size; i ++ ) {
-			mid0 = mid0 + deltaW[tid + bid * filter_size + i * filter_size * FILTER_NUM];
-			mid1 = mid1 + deltaB[bid + i * FILTER_NUM];
+			mid0 = mid0 + deltaW[tid + bid * filter_size + i * filter_size * filter_num];
+			mid1 = mid1 + deltaB[bid + i * filter_num];
 		}
 
 		filters[tid + bid * filter_size] = filters[tid + bid * filter_size] - lr * mid0 ;
@@ -699,12 +656,12 @@ void shuffle(int * data, int * labels, int dim_row, int width){
 float training(float * data, double * labels, int x, int y, int z){
 	clock_t start, end;
 	start = clock();	
-	float * gpu_data;//original hyperspectral image, saved in global memory
-	float * gpu_processed_train;//extracted train samples
-	float * gpu_processed_test;//extracted test samples
-	int * gpu_train_index;//index of train samples and their neighbors
-	int * gpu_test_index;//index of test samples
-	int * gpu_processed_labels;//encoded train labels
+	float * gpu_data;
+	float * gpu_processed_train;
+	float * gpu_processed_test;
+	int * gpu_train_index;
+	int * gpu_test_index;
+	int * gpu_processed_labels;
 
 	//preprocessing
 	int data_size = 0;
@@ -717,7 +674,6 @@ float training(float * data, double * labels, int x, int y, int z){
 	}
 	int test_size = (data_size-1)/5 + 1;
 	int train_size = data_size - test_size;
-	fprintf(stdout,"Num of labeled sapmles : %d\n", data_size);
 	int * train_index = new int [train_size * (NEIGHBOR + 1)];
 	int * test_index = new int [test_size * (NEIGHBOR+1)];
 
@@ -834,7 +790,7 @@ float training(float * data, double * labels, int x, int y, int z){
 		}
 	}
 
-	shuffle(train_index, processed_labels, (NEIGHBOR+1), train_size);//shuffle the samples in training set
+	shuffle(train_index, processed_labels, (NEIGHBOR+1), train_size);
 
 	//malloc GPU memory, copy data to GPU
 	checkCudaErrors(cudaMalloc((void **) &gpu_data, sizeof(float) * x * y * z));
@@ -859,7 +815,6 @@ float training(float * data, double * labels, int x, int y, int z){
 	processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_train_index, gpu_processed_train, x, y, z, train_size);
 	processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_test_index, gpu_processed_test, x, y, z, test_size);
 
-	//cudaDeviceSynchronize();
 	end = clock();
 	float tt = float(end - start);
 	fprintf(stdout,"[Samples prepared with %d Nearest-Neighbor-Pixels Strategy  Proportion of Training Samples : %d%%] Execution time : %.3f sec\n", 
@@ -1034,34 +989,36 @@ float training(float * data, double * labels, int x, int y, int z){
 			for( int j = 0; j < batch_size; j ++ )
             {
                 if ( isnan(loss_values[j]) )
-                    loss_values[j] = 0.0001;
+                    loss_values[j] = 0.001;
 
 				loss = loss + loss_values[j];
 			}
 
 			//update parameters
-			update_bias<<< NEU_NUM2, batch_size, sizeof(float) * batch_size >>>( batch_size, 
-                                                                                    NEU_NUM2,
-                                                                                    learning_rate, 
-                                                                                    out.deltaB.data_d, 
-                                                                                    out.bias.data_d );
-			
 			update_fully_connect<<< NEU_NUM1, NEU_NUM2 >>>( batch_size, 
-                                                            learning_rate, 
-                                                            out.weights.data_d, 
-                                                            out.deltaW.data_d, 
-                                                            fulconnect.bias.data_d,
-                                                            fulconnect.deltaB.data_d );
+                                                                        NEU_NUM1,
+                                                                        NEU_NUM2,
+                                                                        learning_rate,
+									out.weights.data_d,
+									out.deltaW.data_d, 
+                                                                        out.bias.data_d, 
+                                                                        out.deltaB.data_d );
 			
-			update_weights<<< pooling_output_length, NEU_NUM1 >>>( batch_size,
+			
+			
+			
+			update_fully_connect<<< pooling_output_length, NEU_NUM1 >>>( batch_size,
                                                                       pooling_output_length, 
                                                                       NEU_NUM1, 
                                                                       learning_rate, 
                                                                       fulconnect.weights.data_d, 
-                                                                      fulconnect.deltaW.data_d );
+                                                                      fulconnect.deltaW.data_d,
+                                                                      fulconnect.bias.data_d,
+                                                                      fulconnect.deltaB.data_d );
 			
             update_convolution<<< FILTER_NUM, filter_size >>>( batch_size, 
                                                                filter_size,
+                                                               FILTER_NUM,
                                                                learning_rate, 
                                                                conv.deltaW.data_d, 
                                                                conv.deltaB.data_d, 
