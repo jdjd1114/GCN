@@ -480,7 +480,7 @@ __global__ static void bp_convolution( int data_id,
 
 		deltaW[tid + bid * filter_size + batch_id * filter_size * filter_num] = mid0 / re_size;
 		
-		if(tid < 1)
+		if ( tid < 1 )
 			deltaB[bid + batch_id * filter_num] = mid1 / re_size;
 	}
 }
@@ -555,7 +555,7 @@ __global__ static void loss_function( int batch_id,
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if(tid < batch_size)
+    if ( tid < batch_size )
     {
         double tmp = 0.0;
         for ( size_t i = 0; i < output_size; i ++ ) {
@@ -574,12 +574,12 @@ __global__ static void processing(int iter, double * data, int * train_index, do
 	int threadNum = blockDim.x * gridDim.x;
 	int id = tid + iter * threadNum;
 
-	if (id < train_size){
+	if  ( id < train_size ) {
 		int idx = id * (NEIGHBOR+1) * z;
 		int i, j;
-		for (i=0; i<z; i++){
-			for (j=0; j<(NEIGHBOR+1); j++){
-				processed_data[idx] = data[train_index[j + id*(NEIGHBOR+1)] + i * x*y];
+		for ( i = 0; i < z; i ++ ) {
+			for ( j = 0; j < (NEIGHBOR + 1); j ++ ) {
+				processed_data[idx] = data[train_index[j + id * (NEIGHBOR + 1)] + i * x * y];
 				idx = idx + 1;	
 			}
 		}
@@ -610,40 +610,44 @@ double count_err(double * test_labels, double * output, int test_idx)
 }
 
 // Insert current loss value to the queue
-void insert_line(double * a, double b){
-	for(int i=1; i<VALID_BATCH; i++){
-		a[i-1] = a[i];
+void insert_line(double * a, double b)
+{
+	for ( int i = 1; i < VALID_BATCH; i ++ ) {
+		a[i - 1] = a[i];
 	}
-	a[VALID_BATCH-1] = b;
+	a[VALID_BATCH - 1] = b;
 }
 
 // shuffle
-void shuffle(int * data, int * labels, int dim_row, int width){
+void shuffle(int * data, int * labels, int dim_row, int width)
+{
 	int index,  i;
 	int temp;
 	double tmp;
 	srand(time(NULL));
-	for(i=0; i<width; i++){
-		index=rand()%(width-i) + i;
+	for ( i = 0; i < width; i ++ )
+    {
+		index = rand() % (width - i) + i;
 		if ( index != i ) {
 			for ( int j = 0; j < dim_row; j ++ )
             {
-				temp = data[j + i*dim_row];
-				data[j + i*dim_row] = data[j +index*dim_row];
-				data[j + index*dim_row] = temp;
+				temp = data[j + i * dim_row];
+				data[j + i * dim_row] = data[j + index * dim_row];
+				data[j + index * dim_row] = temp;
 			}
 
 			for ( int j = 0; j < NEU_NUM2; j ++ ) 
             {
-				tmp = labels[j + i*NEU_NUM2];
-				labels[j + i*NEU_NUM2] = labels[j + index*NEU_NUM2];
-				labels[j + index*NEU_NUM2] = tmp;
+				tmp = labels[j + i * NEU_NUM2];
+				labels[j + i * NEU_NUM2] = labels[j + index * NEU_NUM2];
+				labels[j + index * NEU_NUM2] = tmp;
 			}
 		}
 	}
 }
 
-double training(double * data, double * labels, int x, int y, int z){
+double training(double * data, double * labels, int x, int y, int z)
+{
 	clock_t start, end;
 	start = clock();	
 	double * gpu_data;
@@ -655,123 +659,123 @@ double training(double * data, double * labels, int x, int y, int z){
 
 	//preprocessing
 	int data_size = 0;
-	int * data_index = new int [x*y];
-	for ( int i = 0; i < x * y; i ++ ) {
+	int * data_index = new int [x * y];
+	for ( int i = 0; i < x * y; i ++ ) 
+    {
 		if ( labels[i] != 0 ) {
-			data_index[data_size]=i;
+			data_index[data_size] = i;
 			data_size ++;
 		}
 	}
 	int test_size = (data_size - 1) / 5 + 1;
 	int train_size = data_size - test_size;
 	int * train_index = new int [train_size * (NEIGHBOR + 1)];
-	int * test_index = new int [test_size * (NEIGHBOR+1)];
+	int * test_index = new int [test_size * (NEIGHBOR + 1)];
 
 	int * processed_labels = new int [train_size * NEU_NUM2]();
 	double * test_labels = new double [test_size]();
 
 	int tr=0, te=0;
-	for (int i=0; i<data_size; i++){
-		if (i%5 != 0){
-			train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1)] = data_index[i];//index of current labeled pixel
-			if(NEIGHBOR == 4)
+	for (int i = 0; i < data_size; i ++ ) {
+		if (i % 5 != 0 ) {
+			train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1)] = data_index[i]; //index of current labeled pixel
+			if ( NEIGHBOR == 4 )
 			{
-				train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = data_index[i] - 1;
-				train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-				train_index[0 + tr * (NEIGHBOR+1)] = data_index[i] - x;
-				train_index[NEIGHBOR + tr * (NEIGHBOR+1)] = data_index[i] + x;
+				train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) - 1] = data_index[i] - 1;
+				train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) + 1] = data_index[i] + 1;
+				train_index[0 + tr * (NEIGHBOR + 1)] = data_index[i] - x;
+				train_index[NEIGHBOR + tr * (NEIGHBOR + 1)] = data_index[i] + x;
 				
-
-				if((data_index[i] % x) == 0){//first row
-					train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1];
+				if ( (data_index[i] % x) == 0 ) { //first row
+					train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) - 1] = train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) + 1];
 				}
-				if((data_index[i] % x) == (x-1)){//last row
-					train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1] = train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1];
+				if ( (data_index[i] % x) == (x-1) ) { //last row
+					train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) + 1] = train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) - 1];
 				}
-				if((data_index[i]/x) == 0){//first column
-					train_index[0 + tr * (NEIGHBOR+1)] = train_index[NEIGHBOR + tr * (NEIGHBOR+1)];
+				if ( (data_index[i] / x) == 0 ) { //first column
+					train_index[0 + tr * (NEIGHBOR + 1)] = train_index[NEIGHBOR + tr * (NEIGHBOR + 1)];
 				}
-				if((data_index[i]/x) == (y-1)){//last column
-					train_index[NEIGHBOR + tr * (NEIGHBOR+1)] = train_index[0 + tr * (NEIGHBOR+1)];
+				if ( (data_index[i] / x) == (y - 1) ) { //last column
+					train_index[NEIGHBOR + tr * (NEIGHBOR + 1)] = train_index[0 + tr * (NEIGHBOR + 1)];
 				}
 			}
-			if(NEIGHBOR == 8)
+			if ( NEIGHBOR == 8 )
 			{
-				train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = data_index[i] - 1;
-				train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-				for(int j0=0;j0<3;j0++){
-					train_index[j0 + tr * (NEIGHBOR+1)] = data_index[i] - 1 - x + j0;
-					train_index[j0+6 + tr * (NEIGHBOR+1)] = data_index[i] - 1 + x + j0;
+				train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) - 1] = data_index[i] - 1;
+				train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) + 1] = data_index[i] + 1;
+				for ( int j0 = 0; j0 < 3; j0 ++ ) {
+					train_index[j0 + tr * (NEIGHBOR + 1)] = data_index[i] - 1 - x + j0;
+					train_index[j0 + 6 + tr * (NEIGHBOR + 1)] = data_index[i] - 1 + x + j0;
 				}
 
-				if((data_index[i] % x) == 0){//first row
-					for (int j=0; j<3; j++)
-						train_index[j*3 + tr*(NEIGHBOR+1)] = train_index[j*3+2 + tr*(NEIGHBOR+1)];
+				if ( (data_index[i] % x) == 0 ) { //first row
+					for ( int j = 0; j < 3; j ++ )
+						train_index[j * 3 + tr * (NEIGHBOR + 1)] = train_index[j * 3 + 2 + tr * (NEIGHBOR + 1)];
 				}
-				if((data_index[i] % x) == (x-1)){//last row
-					for(int j=0;j<3;j++)
-							train_index[j*3+2 + tr*(NEIGHBOR+1)] = train_index[j*3 + tr*(NEIGHBOR+1)];
+				if ( (data_index[i] % x) == (x - 1) ) { //last row
+					for ( int j = 0; j < 3; j ++ )
+					    train_index[j * 3 + 2 + tr * (NEIGHBOR + 1)] = train_index[j * 3 + tr * (NEIGHBOR + 1)];
 				}
-				if((data_index[i]/x) == 0){//first column
-					for(int j=0;j<3;j++)
-						train_index[j + tr*(NEIGHBOR+1)] = train_index[j+6 + tr*(NEIGHBOR+1)];
+				if ( (data_index[i] / x) == 0 ) { //first column
+					for ( int j = 0; j < 3; j ++ )
+						train_index[j + tr * (NEIGHBOR + 1)] = train_index[j + 6 + tr * (NEIGHBOR + 1)];
 				}
-				if((data_index[i]/x) == (y-1)){//last column
-					for(int j=0;j<3;j++)
-						train_index[j+6  + tr*(NEIGHBOR+1)] = train_index[j + tr*(NEIGHBOR+1)];
+				if ( (data_index[i] / x) == (y - 1) ) { //last column
+					for ( int j = 0; j < 3; j ++ )
+						train_index[j + 6 + tr * (NEIGHBOR + 1)] = train_index[j + tr * (NEIGHBOR + 1)];
 				}
 			}
 
-			int mid = int(labels[data_index[i]])-1 + tr*NEU_NUM2;
+			int mid = int(labels[data_index[i]]) - 1 + tr * NEU_NUM2;
 			processed_labels[mid] = 1;
 			tr = tr + 1;
 		}
-		if(i%5 == 0){
-			test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1)] = data_index[i];//index of current labeled pixel
-			if(NEIGHBOR == 4)
+		if ( i % 5 == 0) {
+			test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1)] = data_index[i]; //index of current labeled pixel
+			if ( NEIGHBOR == 4 )
 			{
-				test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = data_index[i] - 1;
-				test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-				test_index[0 + te * (NEIGHBOR+1)] = data_index[i] - x;
-				test_index[NEIGHBOR+ te * (NEIGHBOR+1)] = data_index[i] + x;
+				test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) - 1] = data_index[i] - 1;
+				test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) + 1] = data_index[i] + 1;
+				test_index[0 + te * (NEIGHBOR + 1)] = data_index[i] - x;
+				test_index[NEIGHBOR + te * (NEIGHBOR + 1)] = data_index[i] + x;
 
-				if((data_index[i] % x) == 0){//first row
-					test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1];
+				if ( (data_index[i] % x) == 0 ) { //first row
+					test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) - 1] = test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) + 1];
 				}
-				if((data_index[i] % x) == (x-1)){//last row
-					test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1] = test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1];
+				if ( (data_index[i] % x) == (x - 1) ) { //last row
+					test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) + 1] = test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) - 1];
 				}
-				if((data_index[i]/x) == 0){//first column
-					test_index[0 + te * (NEIGHBOR+1)] = test_index[NEIGHBOR+ te * (NEIGHBOR+1)];
+				if ( (data_index[i] / x) == 0 ) { //first column
+					test_index[0 + te * (NEIGHBOR + 1)] = test_index[NEIGHBOR+ te * (NEIGHBOR + 1)];
 				}
-				if((data_index[i]/x) == (y-1)){//last column
+				if ( (data_index[i] / x) == (y - 1) ) { //last column
 					test_index[NEIGHBOR+ te * (NEIGHBOR+1)] = test_index[0 + te * (NEIGHBOR+1)];
 				}
 			}
-			if(NEIGHBOR == 8)
+			if ( NEIGHBOR == 8 )
 			{
-				test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = data_index[i] - 1;
-				test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-				for(int j0=0;j0<3;j0++){
-					test_index[j0 + te * (NEIGHBOR+1)] = data_index[i] - 1 - x + j0;
-					test_index[j0+6 + te * (NEIGHBOR+1)] = data_index[i] - 1 + x + j0;
+				test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) - 1] = data_index[i] - 1;
+				test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) + 1] = data_index[i] + 1;
+				for ( int j0 = 0; j0 < 3; j0 ++ ) {
+					test_index[j0 + te * (NEIGHBOR + 1)] = data_index[i] - 1 - x + j0;
+					test_index[j0 + 6 + te * (NEIGHBOR + 1)] = data_index[i] - 1 + x + j0;
 				}
 
-				if((data_index[i] % x) == 0){//first row
-					for (int j=0; j<3; j++)
-						test_index[j*3 + te*(NEIGHBOR+1)] = test_index[j*3+2 + te*(NEIGHBOR+1)];
+				if ( (data_index[i] % x) == 0 ) { //first row
+					for ( int j = 0; j < 3; j ++ )
+						test_index[j * 3 + te * (NEIGHBOR + 1)] = test_index[j * 3 + 2 + te * (NEIGHBOR + 1)];
 				}
-				if((data_index[i] % x) == (x-1)){//last row
-					for(int j=0;j<3;j++)
-						test_index[j*3+2 + te*(NEIGHBOR+1)] = test_index[j*3 + te*(NEIGHBOR+1)];
+				if ( (data_index[i] % x) == (x - 1) ) { //last row
+					for ( int j = 0; j < 3; j ++ )
+						test_index[j * 3 + 2 + te * (NEIGHBOR + 1)] = test_index[j * 3 + te * (NEIGHBOR + 1)];
 				}
-				if((data_index[i]/x) == 0){//first column
-					for(int j=0;j<3;j++)
-						test_index[j + te*(NEIGHBOR+1)] = test_index[j+6 + te*(NEIGHBOR+1)];
+				if ( (data_index[i] / x) == 0 ) { //first column
+					for ( int j = 0; j < 3; j++ )
+						test_index[j + te * (NEIGHBOR + 1)] = test_index[j + 6 + te * (NEIGHBOR + 1)];
 				}
-				if((data_index[i]/x) == (y-1)){//last column
-					for(int j=0;j<3;j++)
-						test_index[j+6  + te*(NEIGHBOR+1)] = test_index[j + te*(NEIGHBOR+1)];
+				if ( (data_index[i] / x) == (y - 1) ) { //last column
+					for ( int j = 0; j < 3; j ++ )
+						test_index[j + 6  + te * (NEIGHBOR + 1)] = test_index[j + te * (NEIGHBOR + 1)];
 				}
 			}
 
@@ -780,7 +784,7 @@ double training(double * data, double * labels, int x, int y, int z){
 		}
 	}
 
-	shuffle(train_index, processed_labels, (NEIGHBOR + 1), train_size);//shuffle the samples in training set
+	shuffle(train_index, processed_labels, (NEIGHBOR + 1), train_size); //shuffle the samples in training set
 
 	//malloc GPU memory, copy data to GPU
 	checkCudaErrors(cudaMalloc((void **) &gpu_data, sizeof(double) * x * y * z));
@@ -830,7 +834,6 @@ double training(double * data, double * labels, int x, int y, int z){
     int cube_size = (NEIGHBOR + 1) * z;
 	
     double * gpu_loss_values;
-    //double * gpu_out_deltaW;
 
 	// copy labels to GPU
 	checkCudaErrors(cudaMalloc((void**) &gpu_processed_labels, sizeof(int) * train_size * NEU_NUM2));
@@ -1026,21 +1029,21 @@ double training(double * data, double * labels, int x, int y, int z){
         	
 		insert_line(correct_rate, single_rate);//insert current loss into the line
 		double new_min = *min_element(correct_rate, correct_rate + VALID_BATCH);
-        	if(cur_min > new_min){
+        	if ( cur_min > new_min ) {
             		cur_min = new_min;
 		     	count = 1;
         	}
-        	else{
+        	else {
             		count++;
         	}
-        	if(count >= VALID_BATCH ) {
+        	if ( count >= VALID_BATCH ) {
             		learning_rate = learning_rate * 0.9;
             		fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
                             DATA_BATCH, 80, max_iter, learning_rate);
             		count = 1;
             		cur_min = new_min;
         	}
-        	if(single_rate < MIN_ERR)
+        	if ( single_rate < MIN_ERR )
             		break;
 	} //iter
 
