@@ -488,66 +488,6 @@ __global__ static void bp_convolution( int data_id,
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // update params kernels
-// output layer
-/*__global__ static void update_output( int batch_size, 
-                                      int output_size,
-                                      double lr, 
-                                      double * pre_deltaB, 
-                                      double * bias )
-{
-	int tid = threadIdx.x;
-	int bid = blockIdx.x;
-	if ( tid < batch_size && bid < output_size )
-    {
-		extern __shared__ double tmp[];
-		tmp[tid] = pre_deltaB[bid + tid * output_size];
-		__syncthreads();
-
-		int length = batch_size;
-		int offset = (length - 1) / 2 + 1;
-		while ( length >= 2 ) {
-			if ( tid + offset < length ) {
-				tmp[tid] = tmp[tid] + tmp[tid + offset];
-			}
-			length = (length - 1) / 2 + 1;
-			offset = (offset - 1) / 2 + 1;
-			__syncthreads();
-		}
-
-		if ( tid < 1 )
-			bias[bid] = bias[bid] - tmp[0] * lr / batch_size;
-	}
-}
-// fully_connect layer
-__global__ static void update_output( int batch_size, 
-                                      int input_size,
-                                      int output_size,
-                                             double lr, 
-                                             double * weights,
-                                             double * deltaW,
-                                             double * bias,
-                                             double * deltaB )
-{
-	int tid = threadIdx.x;
-	int bid = blockIdx.x;
-
-    if ( tid < output_size && bid < input_size )
-    {
-        double tmp0 = 0, tmp1 = 0;
-        for ( int i = 0; i < batch_size; i++ )
-        {
-            tmp0 = tmp0 + deltaW[tid + bid * output_size + i * input_size * output_size];
-            tmp1 = tmp1 + deltaB[tid + i * output_size];
-        }
-
-        weights[bid * output_size + tid] = weights[bid * output_size + tid] - lr * tmp0 / batch_size;
-
-        if ( bid < 1 )
-            bias[tid] = bias[tid] - lr * tmp1 / batch_size;
-    }
-}*/
-
-// maxpooling layer
 __global__ static void update_fully_connect( int batch_size, 
                                              int input_size,
                                              int output_size,
@@ -630,7 +570,7 @@ __global__ static void loss_function(int batch_id,
 }
 
 //preprocessing
-__global__ static void processing(int iter, double * data, int * train_index, double * processed_data, int x, int y, int z, int train_size)
+__global__ static void preprocessing(int iter, double * data, int * train_index, double * processed_data, int x, int y, int z, int train_size)
 {
 	int tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int threadNum = blockDim.x * gridDim.x;
@@ -683,19 +623,19 @@ void shuffle(int * data, double * labels, int dim_row, int width){
 	int temp;
 	double tmp;
 	srand(time(NULL));
-	for(i=0; i<width; i++){
+	for ( i = 0; i < width; i ++ ) {
 		index=rand()%(width-i) + i;
-		if(index != i){
-			for(int j=0; j<dim_row; j++){
-				temp = data[j + i*dim_row];
-				data[j + i*dim_row] = data[j +index*dim_row];
-				data[j + index*dim_row] = temp;
+		if ( index != i ) {
+			for ( int j = 0; j < dim_row; j ++ ) {
+				temp = data[j + i * dim_row];
+				data[j + i * dim_row] = data[j + index * dim_row];
+				data[j + index * dim_row] = temp;
 			}
 
-			for(int j=0; j<NEU_NUM2; j++){
-				tmp = labels[j + i*NEU_NUM2];
-				labels[j + i*NEU_NUM2] = labels[j + index*NEU_NUM2];
-				labels[j + index*NEU_NUM2] = tmp;
+			for ( int j = 0; j < NEU_NUM2; j ++ ) {
+				tmp = labels[j + i * NEU_NUM2];
+				labels[j + i * NEU_NUM2] = labels[j + index * NEU_NUM2];
+				labels[j + index * NEU_NUM2] = tmp;
 			}
 		}
 	}
@@ -860,8 +800,8 @@ double training(double * data, double * labels, int x, int y, int z){
     int blocksize = 512;
 	int iter=0;
 
-	processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_train_index, gpu_processed_train, x, y, z, train_size);
-	processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_test_index, gpu_processed_test, x, y, z, test_size);
+	preprocessing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_train_index, gpu_processed_train, x, y, z, train_size);
+	preprocessing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_test_index, gpu_processed_test, x, y, z, test_size);
 
 	//cudaDeviceSynchronize();
 	end = clock();
@@ -1087,22 +1027,22 @@ double training(double * data, double * labels, int x, int y, int z){
         	
 		insert_line(correct_rate, single_rate); // insert current loss into the line
 		double new_min = *min_element(correct_rate, correct_rate + VALID_BATCH);
-        	if(cur_min > new_min){
-            		cur_min = new_min;
-		     	count = 1;
-        	}
-        	else{
-            		count++;
-        	}
-        	if(count >= VALID_BATCH ) {
-            		learning_rate = learning_rate * 0.9;
-            		fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
+        if ( cur_min > new_min ) {
+           	cur_min = new_min;
+		   	count = 1;
+        }
+        else {
+           	count++;
+        }
+        if ( count >= VALID_BATCH ) {
+           	learning_rate = learning_rate * 0.9;
+           	fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
                             DATA_BATCH, 80, max_iter, learning_rate);
-            		count = 1;
-            		cur_min = new_min;
-        	}
-        	if(single_rate < MIN_ERR)
-            		break;
+           	count = 1;
+            cur_min = new_min;
+        }
+        if ( single_rate < MIN_ERR )
+        	break;
 	} // iter
 
 	fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d ]", DATA_BATCH, 80, max_iter);
@@ -1250,7 +1190,7 @@ int main(int argc, char * argv[])
     }
     cout<<endl;
 
-    int device_choosed = 1;
+    int device_choosed = 0;
     fprintf(stdout, "[Cube CNN training with MBGD Algo] Training implemented on Device %d.\n", device_choosed);
     cudaSetDevice(1);
 
@@ -1272,7 +1212,7 @@ int main(int argc, char * argv[])
 	matClose(datamat);
 
 	double correct = training(trainset, trainlabels, dim[0], dim[1], dim[2]);
-	fprintf(stdout,"Accuracy: %f%% \n", correct * 100);
+	fprintf(stdout,"Accuracy: %.3f%% \n", correct * 100);
     
     cudaDeviceReset();
 	return 0;
