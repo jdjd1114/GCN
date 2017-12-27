@@ -5,6 +5,7 @@
 #include <math.h>
 #include <matrix.h>
 #include <iostream>
+#include <random>
 #include "error_util.h"
 #include <cuda_runtime.h>
 #include <algorithm>
@@ -17,10 +18,10 @@ const int POOLONG_LEN = 2;
 const int NEU_NUM1 = 100;
 const int NEU_NUM2 = 13;
 const int NEIGHBOR = 8;
-float learning_rate = 0.06;
+float learning_rate = 0.08;
 const float MIN_ERR = 0.001;
 const int VALID_BATCH = 5;
-const int DATA_BATCH = 50;
+const int DATA_BATCH = 10;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -103,14 +104,19 @@ struct Layer{
     ~Layer();
 
 private:
-    void allocMemcpyCuda(int size, T ** data_h, T ** data_d, bool isMalloc, bool isCopyback);
+    void allocMemcpyCuda(int size, T ** data_h, T ** data_d, bool isMalloc, bool isCopyback, bool isSetToZero);
 };
 
 template<typename T>
-void Layer<T>::allocMemcpyCuda(int size, T **data_h, T **data_d, bool isMallochost, bool isInitalize)
+void Layer<T>::allocMemcpyCuda(int size, T **data_h, T **data_d, bool isMallochost, bool isInitalize, bool isSetToZero)
 {
     size_t sizeBytes = size * sizeof(T);
     checkCudaErrors(cudaMalloc(data_d, sizeBytes));
+    
+    random_device rd;
+    mt19937 gen(rd());
+
+    normal_distribution<float> normal(0, 0.01);
 
     if (isMallochost)
     {
@@ -118,10 +124,18 @@ void Layer<T>::allocMemcpyCuda(int size, T **data_h, T **data_d, bool isMallocho
 
         if (isInitalize)
         {
-            for (int i = 0; i < size; i ++)
+            if ( isSetToZero )
             {
-                data_h[0][i] = (2 * (rand()/T(RAND_MAX)) - 1) / 10;
+                for ( int i = 0; i < size; i ++ )
+                    data_h[0][i] = 0;
             }
+            else {
+                for (int i = 0; i < size; i ++)
+                {
+                    data_h[0][i] = (2 * (rand()/T(RAND_MAX)) - 1) / 10; //normal(gen)
+                }
+            }
+
             checkCudaErrors(cudaMemcpy(*data_d, *data_h, sizeBytes, cudaMemcpyHostToDevice));
         }
     }
@@ -140,12 +154,12 @@ Layer<T>::Layer (int input_size, int weights_size, int bias_size, int output_siz
     if ( isMaxpooling )
         bias.length = bias_size * batch_size;
 
-    allocMemcpyCuda(input.length, &input.data_h, &input.data_d, false, false);
-    allocMemcpyCuda(weights.length, &weights.data_h, &weights.data_d, true, true);
-    allocMemcpyCuda(bias.length, &bias.data_h, &bias.data_d, true, true);
-    allocMemcpyCuda(output.length, &output.data_h, &output.data_d, copyback, false);
-    allocMemcpyCuda(deltaB.length, &deltaB.data_h, &deltaB.data_d, false, false);
-    allocMemcpyCuda(deltaW.length, &deltaW.data_h, &deltaW.data_d, false, false);
+    allocMemcpyCuda(input.length, &input.data_h, &input.data_d, false, false, false);
+    allocMemcpyCuda(weights.length, &weights.data_h, &weights.data_d, true, true, false);
+    allocMemcpyCuda(bias.length, &bias.data_h, &bias.data_d, true, true, true);
+    allocMemcpyCuda(output.length, &output.data_h, &output.data_d, copyback, false, false);
+    allocMemcpyCuda(deltaB.length, &deltaB.data_h, &deltaB.data_d, false, false, false);
+    allocMemcpyCuda(deltaW.length, &deltaW.data_h, &deltaW.data_d, false, false, false);
 
     if ( isMaxpooling )
         checkCudaErrors(cudaMemset(deltaW.data_d, 0, sizeof(T) * deltaW.length));
@@ -225,7 +239,7 @@ __global__ static void convolution( int data_id,
 
         float mid = 0;
         for( int i = 0; i < filterSize; i++ ) {
-            mid = mid + tmp[i + cube_size] * tmp[tid * perLayerSize * stride + i];
+            mid = mid + tmp[cube_size + filterSize - i - 1] * tmp[tid * perLayerSize * stride + i];
         }
         mid = mid + bias[bid];
 
@@ -559,23 +573,39 @@ __global__ static void loss_function ( int batch_id,
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    double sum = 0.0;
-    double tmp = 0.0;
-    if(tid < batch_size){
+    if ( tid < batch_size ) {
+        //double sum = 0;
+        int count_pos = 0;
+        int count_neg = 0;
+        double temp_loss_pos = 0;
+        double temp_loss_neg = 0;
+
         for ( int i = 0; i < output_size; i ++ ) {
 
-            tmp = labels[i + (batch_id * batch_size + tid) * output_size] * log(double(output[i + tid * output_size])) +
-                  (1 - labels[i + (batch_id * batch_size + tid) * output_size]) * log(double(1 - output[i + tid * output_size]));
-
-            sum = sum + tmp;
+            /*sum += labels[i + (batch_id * batch_size + tid) * output_size] * log(double(output[i + tid * output_size])) +
+                   (1 - labels[i + (batch_id * batch_size + tid) * output_size]) * log(double(1 - output[i + tid * output_size]));
+*/
+            //sum = sum + tmp;
+            int idx = i + (batch_id * batch_size + tid) * output_size;
+            if ( labels[idx] == 1 ) {
+                count_pos = count_pos + 1;
+                temp_loss_pos -= output[i + tid * output_size] * (labels[idx] - (output[i + tid * output_size] >= 0)) - 
+                    log(1 + exp(output[i + tid * output_size] - 2 * output[i + tid * output_size] * (output[i + tid * output_size] >= 0)));
+            }
+            else if ( labels[idx] == 0 ) {
+                count_neg ++;
+                temp_loss_neg -= output[i + tid * output_size] * (labels[idx] - (output[i + tid * output_size] >= 0)) - 
+                    log(1 + exp(output[i + tid * output_size] - 2 * output[i + tid * output_size] * (output[i + tid * output_size] >= 0)));
+            }
         }
 
-        loss_values[tid] = - sum / output_size;
+        loss_values[tid] = (temp_loss_pos * count_neg / output_size) * 1 + (temp_loss_neg * count_pos / output_size);
+        //loss_values[tid] = - sum / output_size;
     }
 }
 
 //preprocessing
-__global__ static void processing ( int iter, 
+__global__ static void preprocessing ( int iter, 
                                     float * data, 
                                     int * train_index, 
                                     float * processed_data, 
@@ -681,8 +711,8 @@ float training(float * data, double * labels, int x, int y, int z){
     int * test_labels = new int [test_size]();
 
     int tr=0, te=0;
-    for (int i=0; i<data_size; i++){
-        if (i%5 != 0){
+    for ( int i = 0; i < data_size; i ++ ) {
+        if ( i % 5 != 0 ) {
             train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1)] = data_index[i];//index of current labeled pixel
             if(NEIGHBOR == 4)
             {
@@ -812,8 +842,8 @@ float training(float * data, double * labels, int x, int y, int z){
     int blocksize = 512;
     int iter=0;
 
-    processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_train_index, gpu_processed_train, x, y, z, train_size);
-    processing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_test_index, gpu_processed_test, x, y, z, test_size);
+    preprocessing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_train_index, gpu_processed_train, x, y, z, train_size);
+    preprocessing<<<gridsize,blocksize>>>(iter, gpu_data, gpu_test_index, gpu_processed_test, x, y, z, test_size);
 
     end = clock();
     float tt = float(end - start);
@@ -831,6 +861,7 @@ float training(float * data, double * labels, int x, int y, int z){
         re_size ++;
     }
     int mre_size = (re_size-1) / POOLONG_LEN + 1;
+    //cout << re_size << " " << mre_size << endl;
     int pooling_input_length = re_size * FILTER_NUM;
     int pooling_output_length = mre_size * FILTER_NUM;
     int ful_weights_size = pooling_output_length * NEU_NUM1;// Weights in full connection layer
@@ -851,12 +882,12 @@ float training(float * data, double * labels, int x, int y, int z){
     float * logloss = new float [1000]();
     double * loss_values = new double [DATA_BATCH];
     float * correct_rate = new float [VALID_BATCH];
-    for(int i=0; i<VALID_BATCH; i++){
-        correct_rate[i] = 1;
+    for ( int i = 0; i < VALID_BATCH; i ++ ) {
+        correct_rate[i] = 100;
     }
 
-     float cur_min = 1;
-    int count=1;
+    float cur_min = 100;
+    int count = 1;
     int batch_size = 0;
     int batch_num = train_size / DATA_BATCH;
 
@@ -879,13 +910,13 @@ float training(float * data, double * labels, int x, int y, int z){
     fprintf(stdout, "[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training samples: %d%%  max_iter = %d] lr = %lf\n", DATA_BATCH, 80, max_iter, learning_rate);
     //creat CUDA streams
     cudaStream_t stream[DATA_BATCH];
-    for(int i=0; i<DATA_BATCH; i++){
+    for ( int i = 0; i < DATA_BATCH; i ++ ) {
         cudaStreamCreate(&stream[i]);
     }    
     for (int iter = 0; iter < max_iter; iter ++ ) {
         loss = 0;
         clock_t iter_start = clock();
-        for(int i0=0; i0<batch_num; i0++)
+        for ( int i0 = 0; i0 < batch_num; i0 ++ )
         {
             // compute the number of streams(or batch size)
             batch_size = DATA_BATCH;
@@ -988,8 +1019,8 @@ float training(float * data, double * labels, int x, int y, int z){
             cudaDeviceSynchronize();
             for( int j = 0; j < batch_size; j ++ )
             {
-                if ( isnan(loss_values[j]) )
-                    loss_values[j] = 0.001;
+                //if ( std::isnan(loss_values[j]) )
+                //    loss_values[j] = 0.001;
 
                 loss = loss + loss_values[j];
             }
@@ -999,8 +1030,8 @@ float training(float * data, double * labels, int x, int y, int z){
                                                                         NEU_NUM1,
                                                                         NEU_NUM2,
                                                                         learning_rate,
-                                    out.weights.data_d,
-                                    out.deltaW.data_d, 
+                                                                        out.weights.data_d,
+                                                                        out.deltaW.data_d, 
                                                                         out.bias.data_d, 
                                                                         out.deltaB.data_d );
             
@@ -1031,32 +1062,31 @@ float training(float * data, double * labels, int x, int y, int z){
         clock_t iter_stop = clock();
         float iter_time = float(iter_stop - iter_start) / CLOCKS_PER_SEC;
         double single_rate = loss/train_size;
-               logloss[iter] = single_rate;
-
+        logloss[iter] = single_rate;
         
-        fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d  Execution time: %.3f sec] Epoch %d, loss = %lf;\n", 
+        fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d  Execution time: %.3f sec] Iteration %d, loss = %lf;\n", 
                 DATA_BATCH, 80, max_iter,  iter_time, iter + 1, single_rate);
 
             
         insert_line(correct_rate, single_rate);//insert current loss into the line
         float new_min = *min_element(correct_rate, correct_rate + VALID_BATCH);
-            if(cur_min > new_min){
-                    cur_min = new_min;
-                 count = 1;
-            }
-            else{
-                    count++;
-            }
-            if(count >= VALID_BATCH ) {
-                    learning_rate = learning_rate * 0.9;
-                    fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
-                            DATA_BATCH, 80, max_iter, learning_rate);
+        if(cur_min > new_min){
+            cur_min = new_min;
+            count = 1;
+        }
+        else {
+            count ++;
+        }
+        if(count >= VALID_BATCH ) {
+            learning_rate = learning_rate * 0.9;
+            fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
+                      DATA_BATCH, 80, max_iter, learning_rate);
 
-                    count = 1;
-                    cur_min = new_min;
-            }
-            if(single_rate < MIN_ERR)
-                    break;
+            count = 1;
+            cur_min = new_min;
+        }
+        if ( single_rate < MIN_ERR )
+            break;
     } // iter
 
     fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d ]", DATA_BATCH, 80, max_iter);
@@ -1099,6 +1129,10 @@ float training(float * data, double * labels, int x, int y, int z){
     mxArray * m6 = mxCreateDoubleMatrix(NEU_NUM2, 1, mxREAL);
     memcpy((void *)mxGetPr(m6), (void *)out.bias.data_h, sizeof(float) * NEU_NUM2);
     matPutVariable(pmatFile, "bias2", m6);
+
+    /*for ( int i = 0; i < NEU_NUM2; i ++ )
+        cout << out.bias.data_h[i] << " ";
+    cout << endl;*/
 
     mxArray * m7 = mxCreateDoubleMatrix(300, 1, mxREAL);
     memcpy((void *)mxGetPr(m7), (void *)logloss, sizeof(float) * 300);
@@ -1206,9 +1240,9 @@ int main(int argc, char * argv[])
     }
 
     cout<<endl;
-    int device_choosed = 1;
+    int device_choosed = 0;
     fprintf(stdout, "[Cube CNN training with MBGD Algo] Training implemented on Device %d.\n", device_choosed);
-    cudaSetDevice(1);
+    cudaSetDevice(device_choosed);
 
     float *trainset;
     double *trainlabels;
