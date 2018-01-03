@@ -847,7 +847,7 @@ float training(float * data, double * labels, int x, int y, int z){
 
     end = clock();
     float tt = float(end - start);
-    fprintf(stdout,"[Samples prepared with %d Nearest-Neighbor-Pixels Strategy  Proportion of Training Samples : %d%%] Execution time : %.3f sec\n", 
+    fprintf(stdout,"[Samples prepared with %d Nearest-Neighbor-Pixels Strategy] Proportion of Training Samples: %d%%  Execution time: %.3f sec\n", 
             NEIGHBOR, 80, tt/CLOCKS_PER_SEC);
 
     checkCudaErrors(cudaFree(gpu_data));
@@ -907,7 +907,7 @@ float training(float * data, double * labels, int x, int y, int z){
 
     cudaDeviceSynchronize();
     int max_iter = 300;
-    fprintf(stdout, "[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training samples: %d%%  max_iter = %d] lr = %lf\n", DATA_BATCH, 80, max_iter, learning_rate);
+    fprintf(stdout, "[Cube CNN training with MBGD algo.  BatchSize = %d] lr = %lf\n", DATA_BATCH, learning_rate);
     //creat CUDA streams
     cudaStream_t stream[DATA_BATCH];
     for ( int i = 0; i < DATA_BATCH; i ++ ) {
@@ -1063,9 +1063,11 @@ float training(float * data, double * labels, int x, int y, int z){
         float iter_time = float(iter_stop - iter_start) / CLOCKS_PER_SEC;
         double single_rate = loss/train_size;
         logloss[iter] = single_rate;
-        
-        fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d  Execution time: %.3f sec] Iteration %d, loss = %lf;\n", 
-                DATA_BATCH, 80, max_iter,  iter_time, iter + 1, single_rate);
+        char str[50];
+        sprintf(str, "%d", iter + 1);
+        strcat(str, ",");
+        fprintf(stdout,"[Cube CNN training with MBGD algo.  BatchSize = %d  Execution time: %.3f sec] Iteration %-4s loss = %lf;\n", 
+                DATA_BATCH, iter_time, str, single_rate);
 
             
         insert_line(correct_rate, single_rate);//insert current loss into the line
@@ -1079,8 +1081,7 @@ float training(float * data, double * labels, int x, int y, int z){
         }
         if(count >= VALID_BATCH ) {
             learning_rate = learning_rate * 0.9;
-            fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
-                      DATA_BATCH, 80, max_iter, learning_rate);
+            fprintf(stdout,"[Cube CNN training with MBGD algo.  BatchSize = %d] lr = %lf\n", DATA_BATCH, learning_rate);
 
             count = 1;
             cur_min = new_min;
@@ -1089,7 +1090,7 @@ float training(float * data, double * labels, int x, int y, int z){
             break;
     } // iter
 
-    fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d ]", DATA_BATCH, 80, max_iter);
+    fprintf(stdout,"[Cube CNN training with MBGD algo.  BatchSize = %d]", DATA_BATCH);
     end = clock();
     tt = float(end - start);
     fprintf(stdout," Completed! Global Exesution time is %.3f sec\n", tt/CLOCKS_PER_SEC);
@@ -1218,13 +1219,13 @@ float training(float * data, double * labels, int x, int y, int z){
 
 int main(int argc, char * argv[])
 {
-    fprintf(stdout, "[Cube CNN training with MBGD Algorithm] ");
+    fprintf(stdout, "[Cube CNN training with MBGD algo] ");
       if(!InitCUDA()){
         return 0;
     }
     printf("CUDA initialized.\n");
 
-    fprintf(stdout, "[Cube CNN training with MBGD Algorithm] Available Device List: ");
+    fprintf(stdout, "[Cube CNN training with MBGD algo] Available Device List: ");
     int deviceCount;
     cudaGetDeviceCount(&deviceCount);
 
@@ -1241,7 +1242,7 @@ int main(int argc, char * argv[])
 
     cout<<endl;
     int device_choosed = 0;
-    fprintf(stdout, "[Cube CNN training with MBGD Algo] Training implemented on Device %d.\n", device_choosed);
+    fprintf(stdout, "[Cube CNN training with MBGD algo] Training implemented on Device %d.\n", device_choosed);
     cudaSetDevice(device_choosed);
 
     float *trainset;
