@@ -17,10 +17,10 @@ const int POOLONG_LEN = 2;
 const int NEU_NUM1 = 100;
 const int NEU_NUM2 = 13;
 const int NEIGHBOR = 8;
-double learning_rate = 0.2;
+double learning_rate = 0.5;
 const double MIN_ERR = 0.001;
 const int VALID_BATCH = 5;
-const int DATA_BATCH = 10;
+const int DATA_BATCH = 100;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -153,32 +153,36 @@ void Layer::initLayer (int input_size, int weights_size, int bias_size, int outp
 
 Layer::~Layer ()
 {
-    if (input.data_h != NULL)
+    if ( input.data_h != NULL )
         delete [] input.data_h;
-    if(weights.data_h != NULL)
+    if ( weights.data_h != NULL )
         delete [] weights.data_h;
-    if(output.data_h != NULL)
+    if ( output.data_h != NULL )
         delete [] output.data_h;
-    if(bias.data_h != NULL)
+    if ( bias.data_h != NULL )
         delete [] bias.data_h;
-    if(input.data_d != NULL)
+    if ( deltaW.data_h != NULL )
+        delete [] deltaW.data_h;
+    if ( deltaB.data_h != NULL )
+        delete [] deltaB.data_h;
+    if ( input.data_d != NULL )
         cudaFree(input.data_d);
-    if(output.data_d != NULL)
+    if ( output.data_d != NULL )
         cudaFree(output.data_d);
-    if(weights.data_d != NULL)
+    if ( weights.data_d != NULL )
         cudaFree(weights.data_d);
-    if(bias.data_d != NULL)
+    if ( bias.data_d != NULL )
         cudaFree(bias.data_d);
-    if(deltaW.data_d != NULL)
+    if ( deltaW.data_d != NULL )
         cudaFree(deltaW.data_d);
-    if(deltaB.data_d != NULL)
+    if ( deltaB.data_d != NULL )
         cudaFree(deltaB.data_d);
 }
 
 // copy data to shared memory
 __device__ void copy_data_to_shared( double * data, double * data_tmp, int tid, int offset, int head, int length )
 {
-	for(size_t i = tid * offset; i < (tid + 1) * offset && (i < length); i++)
+	for ( size_t i = tid * offset; i < (tid + 1) * offset && (i < length); i ++ )
     {
 		data_tmp[i] = data[i + head];
 	}
@@ -693,7 +697,6 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 	clock_t start, end;
 	start = clock();	
 	double * gpu_data;//original hyperspectral image, saved in global memory
-	//double * gpu_processed_test;//extracted test samples
 	int * gpu_train_index;//index of train samples and their neighbors
 	int * gpu_test_index;//index of test samples
 
@@ -824,7 +827,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 		}
 	}
 
-	shuffle(train_index, processed_labels, (NEIGHBOR+1), train_size);//shuffle the samples in training set
+	shuffle(train_index, processed_labels, (NEIGHBOR + 1), train_size);//shuffle the samples in training set
 
     DataLayer dataLayer[device_choosed_num];
     dataLayer[master_choosed].initData(train_size * (NEIGHBOR + 1) * z, train_size * NEU_NUM2);
@@ -840,8 +843,6 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 	checkCudaErrors(cudaMemcpy(gpu_train_index, train_index, sizeof(int) * train_size * (NEIGHBOR + 1), cudaMemcpyHostToDevice));
 	checkCudaErrors(cudaMalloc((void **) &gpu_test_index, sizeof(int) * test_size * (NEIGHBOR + 1)));
 	checkCudaErrors(cudaMemcpy(gpu_test_index, test_index, sizeof(int) * test_size * (NEIGHBOR + 1), cudaMemcpyHostToDevice));
-
-	//checkCudaErrors(cudaMalloc((void **) &gpu_processed_test, sizeof(double) * test_size * (NEIGHBOR + 1) * z));
 
     delete [] data_index;
     delete [] train_index;
@@ -870,7 +871,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
     {
 		re_size ++;
 	}
-	int mre_size = (re_size-1) / POOLONG_LEN + 1;
+	int mre_size = (re_size - 1) / POOLONG_LEN + 1;
     int pooling_input_length = re_size * FILTER_NUM;
     int pooling_output_length = mre_size * FILTER_NUM;
 	//int ful_weights_size = pooling_output_length * NEU_NUM1;    // SAVE DATA
@@ -903,11 +904,6 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 
 	start = clock();
 
-    /*DataLayer dataLayer[device_choosed_num];
-    dataLayer[master_choosed].initData(train_size * cube_size, train_size * NEU_NUM2);
-    dataLayer[master_choosed].input.data_d = gpu_processed_train;
-    dataLayer[master_choosed].labels.data_d = gpu_processed_labels;
-*/
     Layer conv[device_choosed_num];
     conv[master_choosed].initLayer( cube_size, filter_size * FILTER_NUM, FILTER_NUM, pooling_input_length, DATA_BATCH, false, false);
 
@@ -954,8 +950,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
         }
     }
 
-    //cudaSetDevice(master_choosed);
-    int max_iter = 300;
+    int max_iter = max_iter;
     fprintf(stdout, "[Cube CNN training with MBGD algo.  BatchSize = %d] lr = %lf\n", DATA_BATCH, learning_rate);    
 
 	for ( int iter = 0; iter < max_iter; iter ++ ){
@@ -1145,13 +1140,13 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 
 			//update parameters
 			update_fully_connect<<< NEU_NUM1, NEU_NUM2 >>>( batch_size,
-                                                     NEU_NUM1, 
-                                                     NEU_NUM2,
-                                                     learning_rate, 
-                                                     out[master_choosed].weights.data_d,
-                                                     out[master_choosed].deltaW.data_d,
-                                                     out[master_choosed].bias.data_d, 
-                                                     out[master_choosed].deltaB.data_d );
+                                                            NEU_NUM1, 
+                                                            NEU_NUM2,
+                                                            learning_rate, 
+                                                            out[master_choosed].weights.data_d,
+                                                            out[master_choosed].deltaW.data_d,
+                                                            out[master_choosed].bias.data_d, 
+                                                            out[master_choosed].deltaB.data_d );
 			
             //cudaDeviceSynchronize();
 
@@ -1262,7 +1257,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 		cudaStreamDestroy(stream[i]);
 	}
 	
-	//test
+	// model testing
     cudaSetDevice(master_choosed);
 	double right = 0;
 	double accuracy_count = 0;
