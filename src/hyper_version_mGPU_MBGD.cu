@@ -551,24 +551,58 @@ __global__ static void update_convolution( int batch_size,
 }
 
 __global__ static void loss_function(int batch_id, 
-                                     int batch_size, 
+                                     int batch_size,
+                                     int sub_batch_size,
+                                     int train_size, 
                                      int output_size,
+                                     int master_choosed,
                                      double * output, 
                                      double * labels, 
                                      double * loss_values)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if ( tid < batch_size ) 
+    if ( tid < sub_batch_size ) 
     {
-        double tmp = 0;
-        for ( size_t i = 0; i < output_size; i ++ ) 
+        int dnum = batch_size / sub_batch_size;
+        extern __shared__ double tmp[];
+        tmp[tid] = 0;
+        for ( size_t i = 0; i < output_size; i ++ )
         {
-            tmp = tmp + labels[i + (batch_id * batch_size + tid) * output_size] * log(output[i + tid * output_size]) +
-                   (1 - labels[i + (batch_id * batch_size + tid) * output_size]) * log(1 - output[i + tid * output_size]);
+            tmp[tid] += labels[i + (batch_id * sub_batch_size + tid) * output_size] * log(output[i + tid * output_size]) +
+                        (1 - labels[i + (batch_id * sub_batch_size + tid) * output_size]) * log(1 - output[i + tid * output_size]);
         }
 
-        loss_values[tid] = - tmp / output_size;
+        int sub = 1;
+        for ( size_t d = 0; d < dnum; d ++ )
+        {
+            if ( d != master_choosed ) {
+                for ( size_t i = 0; i < output_size; i ++ ) 
+                {
+                    tmp[tid] += labels[i + (batch_id * sub_batch_size + tid) * output_size + sub * (train_size / dnum * output_size)] * 
+                                log(output[i + tid * output_size + sub * sub_batch_size * output_size]) +
+                                (1 - labels[i + (batch_id * sub_batch_size + tid) * output_size + sub * (train_size / dnum * output_size)]) * 
+                                log(1 - output[i + tid * output_size + sub * sub_batch_size * output_size]);
+                }
+                sub ++;
+            }
+        }
+
+        __syncthreads();
+        int length = sub_batch_size;
+        int offset = (length - 1) / 2 + 1;
+        while ( length >= 2 )
+        {
+            if ( tid + offset < length )
+            {
+                tmp[tid] = tmp[tid] + tmp[tid + offset];
+            }
+            length = (length - 1) / 2 + 1;
+            offset = (offset - 1) / 2 + 1;
+            __syncthreads();
+        }
+        if ( tid < 1 )
+            loss_values[0] = - tmp[0] / output_size;
     }
 }
 
@@ -823,7 +857,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 	//cudaDeviceSynchronize();
 	end = clock();
 	float tt = float(end - start);
-	fprintf(stdout,"[Samples prepared with %d Nearest-Neighbor-Pixels Strategy  Proportion of Training Samples : %d%%] Execution time : %.3f sec\n", 
+	fprintf(stdout,"[Samples prepared with %d Nearest-Neighbor-Pixels Strategy] Proportion of Training Samples: %d%%  Execution time: %.3f sec\n", 
             NEIGHBOR, 80, tt/CLOCKS_PER_SEC);
 
 	checkCudaErrors(cudaFree(gpu_data));
@@ -921,8 +955,8 @@ double training(double * data, double * labels, int x, int y, int z, int device_
     }
 
     //cudaSetDevice(master_choosed);
-    int max_iter = 100;
-    fprintf(stdout, "[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training samples: %d%%  max_iter = %d] lr = %lf\n", DATA_BATCH, 80, max_iter, learning_rate);    
+    int max_iter = 300;
+    fprintf(stdout, "[Cube CNN training with MBGD algo.  BatchSize = %d] lr = %lf\n", DATA_BATCH, learning_rate);    
 
 	for ( int iter = 0; iter < max_iter; iter ++ ){
 		loss = 0;
@@ -1084,26 +1118,30 @@ double training(double * data, double * labels, int x, int y, int z, int device_
                     PeerToPeerMemcpy(dev, out[dev].deltaB.data_d,
                                      master_choosed, out[master_choosed].deltaB.data_d + sub * sub_batch_size * NEU_NUM2,
                                      sub_batch_size * NEU_NUM2);
+                    PeerToPeerMemcpy(dev, out[dev].output.data_d,
+                                     master_choosed, out[master_choosed].output.data_d + sub * sub_batch_size * NEU_NUM2,
+                                     sub_batch_size * NEU_NUM2);
                     
                     sub ++;
                 }
             }
 
             cudaSetDevice(master_choosed);
-            loss_function<<< 1, sub_batch_size >>>( i0, 
-                                                    sub_batch_size, 
-                                                    NEU_NUM2,
-                                                    out[master_choosed].output.data_d, 
-                                                    dataLayer[master_choosed].labels.data_d, 
-                                                    gpu_loss_values );
+            loss_function<<< 1, 
+                             sub_batch_size, 
+                             sizeof(double) * sub_batch_size >>>( i0,
+                                                                  batch_size,
+                                                                  sub_batch_size,
+                                                                  train_size, 
+                                                                  NEU_NUM2,
+                                                                  master_choosed,
+                                                                  out[master_choosed].output.data_d, 
+                                                                  dataLayer[master_choosed].labels.data_d, 
+                                                                  gpu_loss_values);
 
-            checkCudaErrors(cudaMemcpy(loss_values, gpu_loss_values, sizeof(double) * sub_batch_size, cudaMemcpyDeviceToHost));
+            checkCudaErrors(cudaMemcpy(loss_values, gpu_loss_values, sizeof(double), cudaMemcpyDeviceToHost));
 			
-            cudaDeviceSynchronize();
-			for ( int j = 0; j < sub_batch_size; j ++ )
-            {
-				loss = loss + loss_values[j];
-			}
+            loss += loss_values[0];
 
 			//update parameters
 			update_fully_connect<<< NEU_NUM1, NEU_NUM2 >>>( batch_size,
@@ -1143,9 +1181,11 @@ double training(double * data, double * labels, int x, int y, int z, int device_
         float iter_time = float(iter_stop - iter_start) / CLOCKS_PER_SEC;
 		double single_rate = loss/train_size;
         logloss[iter] = single_rate;
-		
-		fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d  Execution time: %.3f sec] Epoch %d, loss = %lf;\n", 
-                DATA_BATCH, 80, max_iter, iter_time, iter + 1, single_rate);
+        char str[50];
+        sprintf(str, "%d", iter + 1);
+        strcat(str, ",");
+		fprintf(stdout,"[Cube CNN training with MBGD algo.  BatchSize = %d  Execution time: %.3f sec] Iteration %-4s loss = %lf;\n", 
+                DATA_BATCH, iter_time, str, single_rate);
         	
 		insert_line(correct_rate, single_rate); // insert current loss into the line
 		double new_min = *min_element(correct_rate, correct_rate + VALID_BATCH);
@@ -1158,8 +1198,8 @@ double training(double * data, double * labels, int x, int y, int z, int device_
         }
         if ( count >= VALID_BATCH ) {
            	learning_rate = learning_rate * 0.9;
-           	fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d] lr = %lf\n",
-                            DATA_BATCH, 80, max_iter, learning_rate);
+           	fprintf(stdout,"[Cube CNN training with MBGD algo.  BatchSize = %d] lr = %lf\n",
+                            DATA_BATCH, learning_rate);
            	count = 1;
             cur_min = new_min;
         }
@@ -1167,7 +1207,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
         	break;
 	} // iter
 
-	fprintf(stdout,"[Cube CNN training with MBGD Algo  BatchSize = %d  Proportion of Training Samples: %d%%  max_iter = %d ]", DATA_BATCH, 80, max_iter);
+	fprintf(stdout,"[Cube CNN training with MBGD algo.  BatchSize = %d]", DATA_BATCH);
 	end = clock();
 	tt = double(end - start);
 	fprintf(stdout," Completed! Global Exesution time is %.3f sec\n", tt/CLOCKS_PER_SEC);
@@ -1285,7 +1325,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 
 	end = clock();
 	tt = float(end - start);
-	fprintf(stdout, "[Cube CNN testing] Execution time is %.3fs. ", tt/CLOCKS_PER_SEC);
+	fprintf(stdout, "[Cube CNN testing] Done. Execution time: %.3fs. ", tt/CLOCKS_PER_SEC);
   
     return accuracy_count/test_size;
 }
@@ -1293,13 +1333,13 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 
 int main(int argc, char * argv[])
 {
-    fprintf(stdout, "[Cube CNN training with MBGD Algo] ");
+    fprintf(stdout, "[Cube CNN training with MBGD algo] ");
   	if(!InitCUDA()){
 		return 0;
 	}
 	printf("CUDA initialized.\n");
 
-    fprintf(stdout, "[Cube CNN training with MBGD Algo] Available Device List: ");
+    fprintf(stdout, "[Cube CNN training with MBGD algo] Available Device List: ");
     int deviceCount;
     cudaGetDeviceCount(&deviceCount);
 
@@ -1327,7 +1367,7 @@ int main(int argc, char * argv[])
     int master_choosed = 0;
     master_choosed = (int)atoi(argv[3]);
 
-    fprintf(stdout, "[Cube CNN training with MBGD Algo] Choosing \033[31mDevice %d\033[0m as \033[31mMASTER\033[0m.\n", master_choosed);
+    fprintf(stdout, "[Cube CNN training with MBGD algo] Choosing \033[31mDevice %d\033[0m as \033[31mMASTER\033[0m.\n", master_choosed);
     cudaSetDevice(master_choosed);
 
 	double *trainset,*trainlabels;
