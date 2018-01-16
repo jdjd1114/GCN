@@ -18,10 +18,10 @@ const int POOLONG_LEN = 2;
 const int NEU_NUM1 = 100;
 const int NEU_NUM2 = 13;
 const int NEIGHBOR = 8;
-float learning_rate = 0.08;
+float learning_rate = 0.04;
 const float MIN_ERR = 0.001;
 const int VALID_BATCH = 5;
-const int DATA_BATCH = 10;
+const int DATA_BATCH = 100;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -1211,7 +1211,7 @@ float training(float * data, double * labels, int x, int y, int z){
 
     end = clock();
     tt = float(end - start);
-    fprintf(stdout, "[Cube CNN testing] Execution time is %.3fs. ", tt/CLOCKS_PER_SEC);
+    fprintf(stdout, "[Cube CNN testing] Execution time is %.3f sec. ", tt/CLOCKS_PER_SEC);
   
     return accuracy_count/test_size;
 }
