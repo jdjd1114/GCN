@@ -360,7 +360,7 @@ __global__ static void output_and_dvalue( int data_id,
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // backward propagation kernels
 // output layer
-__global__ static void bp_output( int batch_id,
+/*__global__ static void bp_output( int batch_id,
                                   int input_size,
                                   int output_size, 
                                   double * weights, 
@@ -395,9 +395,9 @@ __global__ static void bp_output( int batch_id,
                                                       (1 + data[bid + batch_id * input_size]) * 
                                                       (1 - data[bid + batch_id * input_size]);
 	}
-}
+}*/
 
-// maxpooling layer
+// fully_connect layer
 __global__ static void bp_fully_connect( int batch_id, 
                                          int input_size,
                                          int output_size,
@@ -405,7 +405,7 @@ __global__ static void bp_fully_connect( int batch_id,
                                          double * deltaB,
                                          double * deltaW,
                                          double * data,
-                                         double * data_index,
+                                         //double * data_index,
                                          double * fol_deltaZ )
 {
 	int tid = threadIdx.x;
@@ -950,7 +950,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
         }
     }
 
-    int max_iter = max_iter;
+    int max_iter = 300;
     fprintf(stdout, "[Cube CNN training with MBGD algo.  BatchSize = %d] lr = %lf\n", DATA_BATCH, learning_rate);    
 
 	for ( int iter = 0; iter < max_iter; iter ++ ){
@@ -1035,7 +1035,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
                                                                               dataLayer[d].labels.data_d,
                                                                               out[d].deltaB.data_d );
 
-				    bp_output<<< NEU_NUM1, 
+				    bp_fully_connect<<< NEU_NUM1, 
                                  NEU_NUM2, 
                                  NEU_NUM2 * sizeof(double), 
                                  stream[i1 + d * sub_batch_size] >>>( i1, 
@@ -1057,7 +1057,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
                                                                              fulconnect[d].deltaB.data_d,
                                                                              fulconnect[d].deltaW.data_d,
                                                                              pooling[d].output.data_d, 
-                                                                             pooling[d].bias.data_d,
+                                                                             //pooling[d].bias.data_d,
                                                                              pooling[d].deltaB.data_d );
 
                     bp_maxpooling<<< 1, 
@@ -1320,7 +1320,7 @@ double training(double * data, double * labels, int x, int y, int z, int device_
 
 	end = clock();
 	tt = float(end - start);
-	fprintf(stdout, "[Cube CNN testing] Done. Execution time: %.3fs. ", tt/CLOCKS_PER_SEC);
+	fprintf(stdout, "[Cube CNN testing] Done. Execution time: %.3f sec. ", tt/CLOCKS_PER_SEC);
   
     return accuracy_count/test_size;
 }
