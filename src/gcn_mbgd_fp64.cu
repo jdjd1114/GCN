@@ -1225,7 +1225,7 @@ double training(double * data, double * labels, int x, int y, int z)
 
     end = clock();
     tt = float(end - start);
-    fprintf(stdout, "[Cube CNN testing] Execution time is %.3fs. ", tt/CLOCKS_PER_SEC);
+    fprintf(stdout, "[Cube CNN testing] Execution time is %.3f sec. ", tt/CLOCKS_PER_SEC);
   
     return accuracy_count/test_size;
 }
