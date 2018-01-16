@@ -370,7 +370,7 @@ __global__ static void output_and_dvalue( int data_id,
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // backward propagation kernels
 // output layer
-__global__ static void bp_output( int batch_id,
+/*__global__ static void bp_output( int batch_id,
                                   int input_size,
                                   int output_size, 
                                   float * weights, 
@@ -405,9 +405,9 @@ __global__ static void bp_output( int batch_id,
                                                       (1 + data[bid + batch_id * input_size]) * 
                                                       (1 - data[bid + batch_id * input_size]);
     }
-}
+}*/
 
-// maxpooling layer
+// fully_connect
 __global__ static void bp_fully_connect( int batch_id, 
                                          int input_size, 
                                          int output_size,
@@ -415,7 +415,7 @@ __global__ static void bp_fully_connect( int batch_id,
                                          float * deltaB,
                                          float * deltaW,
                                          float * data,
-                                         float * data_index,
+                                         //float * data_index,
                                          float * fol_deltaZ )
 {
     int tid = threadIdx.x;
@@ -964,7 +964,7 @@ float training(float * data, double * labels, int x, int y, int z){
                                                                                                           dataLayer.labels.data_d,
                                                                                                           out.deltaB.data_d );
                                         
-                bp_output<<<NEU_NUM1, NEU_NUM2, NEU_NUM2 * sizeof(float), stream[i1]>>>( i1, 
+                bp_fully_connect<<<NEU_NUM1, NEU_NUM2, NEU_NUM2 * sizeof(float), stream[i1]>>>( i1, 
                                                                                          NEU_NUM1,
                                                                                          NEU_NUM2,
                                                                                          out.weights.data_d, 
@@ -980,7 +980,7 @@ float training(float * data, double * labels, int x, int y, int z){
                                                                                                                fulconnect.deltaB.data_d, 
                                                                                                                fulconnect.deltaW.data_d,
                                                                                                                pooling.output.data_d, 
-                                                                                                               pooling.bias.data_d,
+                                                                                                               //pooling.bias.data_d,
                                                                                                                pooling.deltaB.data_d );
                                              
                 bp_maxpooling<<< 1, pooling_output_length, 0, stream[i1] >>>(i1,
