@@ -13,7 +13,8 @@
    make
    
 4. run the program
-   <br>`bash` ./bin/gcn data/DATASET.mat
-   <br> DATASET.mat consists of two parts: 
+   <br>`bash` ./bin/gcn data/DATASET.mat device_id
+   <br> DATASET.mat consists of three parts: 
    <br> * Dataset, a 3-dimensional hyperspectal image
    <br> * labels, a 2-dimensional label matrix
+   <br> * Device ID
