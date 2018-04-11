@@ -18,3 +18,9 @@
    <br> * Dataset, a 3-dimensional hyperspectal image
    <br> * labels, a 2-dimensional label matrix
    <br> * Device ID
+
+5. run GCN_version_2.0 ( Multiple GPUs verison )
+   modify SRC in Makefile (src/hyper_version_mGPU.cu)
+   recompile with Makefile
+   <br>`bash` make
+   <br>`bash` ./bin/gcn data/DATASET.mat master_dev_id slave_dev_id
