@@ -1351,7 +1351,7 @@ int main(int argc, char * argv[])
     cout<<endl;
 
     if ( argc != 4 ) {
-	    fprintf(stderr, "3 input arguments required!\n");
+	    fprintf(stderr, "4 input arguments required!\n");
 		return 0;
 	}
 
