@@ -505,7 +505,7 @@ __global__ static void bp_convolution( int data_id,
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // update params kernels
-__global__ static void update_fully_connect( int batch_size, 
+__global__ static void update_params_row( int batch_size, 
                                              int input_size,
                                               int output_size,
                                              float lr, 
@@ -537,14 +537,14 @@ __global__ static void update_fully_connect( int batch_size,
 
 
 // convolution layer
-__global__ static void update_convolution( int batch_size, 
+__global__ static void update_params_col( int batch_size, 
                                            int filter_size,
                                            int filter_num,
-                                           float lr, 
-                                           float * deltaW, 
-                                           float * deltaB, 
+                                           float lr,
                                            float * filters, 
-                                           float * bias )
+                                           float * deltaW, 
+                                           float * bias,
+                                           float * deltaB ) 
 {
     int tid = threadIdx.x;
     int bid = blockIdx.x;
@@ -1026,7 +1026,7 @@ float training(float * data, double * labels, int x, int y, int z){
             }
 
             //update parameters
-            update_fully_connect<<< NEU_NUM1, NEU_NUM2 >>>( batch_size, 
+            update_params_row<<< NEU_NUM1, NEU_NUM2 >>>( batch_size, 
                                                                         NEU_NUM1,
                                                                         NEU_NUM2,
                                                                         learning_rate,
@@ -1038,7 +1038,7 @@ float training(float * data, double * labels, int x, int y, int z){
             
             
             
-            update_fully_connect<<< pooling_output_length, NEU_NUM1 >>>( batch_size,
+            update_params_row<<< pooling_output_length, NEU_NUM1 >>>( batch_size,
                                                                       pooling_output_length, 
                                                                       NEU_NUM1, 
                                                                       learning_rate, 
@@ -1047,14 +1047,14 @@ float training(float * data, double * labels, int x, int y, int z){
                                                                       fulconnect.bias.data_d,
                                                                       fulconnect.deltaB.data_d );
             
-            update_convolution<<< FILTER_NUM, filter_size >>>( batch_size, 
+            update_params_col<<< FILTER_NUM, filter_size >>>( batch_size, 
                                                                filter_size,
                                                                FILTER_NUM,
                                                                learning_rate, 
+                                                               conv.weights.data_d,
                                                                conv.deltaW.data_d, 
-                                                               conv.deltaB.data_d, 
-                                                               conv.weights.data_d, 
-                                                               conv.bias.data_d );
+                                                               conv.deltaB.data_d,
+                                                               conv.deltaB.data_d );
     
             checkCudaErrors(cudaMemset(pooling.deltaW.data_d, 0, sizeof(float) * pooling_input_length * DATA_BATCH));    
         } //i0
@@ -1241,16 +1241,17 @@ int main(int argc, char * argv[])
     }
 
     cout<<endl;
-    int device_choosed = 0;
+
+    if ( argc != 3 ) {
+        fprintf(stderr, "3 input arguments required!\n");
+        return 0;
+    }
+    int device_choosed = (int)atoi(argv[2]);
     fprintf(stdout, "[Cube CNN training with MBGD algo] Training implemented on Device %d.\n", device_choosed);
     cudaSetDevice(device_choosed);
 
     float *trainset;
     double *trainlabels;
-    if(argc!=2){
-        fprintf(stderr, "2 input arguments required!");
-        return 0;
-    }
 
     MATFile * datamat = matOpen(argv[1], "r");
     mxArray * train = matGetVariable(datamat,"DataSet");
