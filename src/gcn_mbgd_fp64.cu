@@ -491,14 +491,14 @@ __global__ static void bp_convolution( int data_id,
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // update params kernels
-__global__ static void update_fully_connect( int batch_size, 
-                                             int input_size,
-                                             int output_size,
-                                             double lr, 
-                                             double * weights, 
-                                             double * deltaW,
-                                             double * bias,
-                                             double * deltaB )
+__global__ static void update_params_row( int batch_size, 
+                                          int input_size,
+                                          int output_size,
+                                          double lr, 
+                                          double * weights, 
+                                          double * deltaW,
+                                          double * bias,
+                                          double * deltaB )
 {
     int tid = threadIdx.x;
     int bid = blockIdx.x;
@@ -523,14 +523,14 @@ __global__ static void update_fully_connect( int batch_size,
 
 
 // convolution layer
-__global__ static void update_convolution( int batch_size, 
-                                           int filter_size,
-                                           int filter_num,
-                                           double lr, 
-                                           double * deltaW, 
-                                           double * deltaB, 
-                                           double * filters, 
-                                           double * bias )
+__global__ static void update_params_col( int batch_size, 
+                                          int filter_size,
+                                          int filter_num,
+                                          double lr, 
+                                          double * filters,
+                                          double * deltaW,
+                                          double * bias,  
+                                          double * deltaB )
 {
     int tid = threadIdx.x;
     int bid = blockIdx.x;
@@ -887,7 +887,7 @@ double training(double * data, double * labels, int x, int y, int z)
     int count = 1;
     int batch_size = 0;
     int batch_num = train_size / DATA_BATCH;
-    cout << "batch_num = " << batch_num <<endl;
+    // cout << "batch_num = " << batch_num <<endl;
 
     start = clock();
 
@@ -1024,7 +1024,7 @@ double training(double * data, double * labels, int x, int y, int z)
             }
 
             //update parameters
-            update_fully_connect<<< NEU_NUM1, NEU_NUM2 >>>( batch_size,
+            update_params_row<<< NEU_NUM1, NEU_NUM2 >>>( batch_size,
                                                      NEU_NUM1, 
                                                      NEU_NUM2,
                                                      learning_rate, 
@@ -1033,7 +1033,7 @@ double training(double * data, double * labels, int x, int y, int z)
                                                      out.bias.data_d, 
                                                      out.deltaB.data_d );
 
-            update_fully_connect<<< pooling_output_length, NEU_NUM1 >>>( batch_size,
+            update_params_row<<< pooling_output_length, NEU_NUM1 >>>( batch_size,
                                                             pooling_output_length,
                                                             NEU_NUM1, 
                                                             learning_rate, 
@@ -1042,17 +1042,20 @@ double training(double * data, double * labels, int x, int y, int z)
                                                             fulconnect.bias.data_d,
                                                             fulconnect.deltaB.data_d );
 
-            update_convolution<<< FILTER_NUM, filter_size >>>( batch_size, 
+            update_params_col<<< FILTER_NUM, filter_size >>>( batch_size,
+                                                               //FILTER_NUM,
                                                                filter_size,
                                                                FILTER_NUM,
-                                                               learning_rate, 
-                                                               conv.deltaW.data_d, 
-                                                               conv.deltaB.data_d, 
+                                                               learning_rate,
                                                                conv.weights.data_d, 
-                                                               conv.bias.data_d );
+                                                               conv.deltaW.data_d,
+                                                               conv.bias.data_d, 
+                                                               conv.deltaB.data_d ); 
+                                                               //conv.weights.data_d, 
+                                                               //conv.bias.data_d );
 
             checkCudaErrors(cudaMemset(pooling.deltaW.data_d, 0, sizeof(double) * pooling_input_length * DATA_BATCH));    
-            
+           
             //single_rate += loss;
             /*loss = loss/batch_size;
             insert_line(correct_rate, loss);//insert current loss into the line
@@ -1170,47 +1173,47 @@ double training(double * data, double * labels, int x, int y, int z)
 
 
     for ( int i1 = 0; i1 < test_size; i1 ++ ) {
-        convolution<<< FILTER_NUM, re_size, (cube_size + filter_size) * sizeof(double)/*, testStream[i1]*/ >>>( i1,
-                                                                                                                0,
-                                                                                                                (NEIGHBOR + 1),
-                                                                                                                z,
-                                                                                                                COV_LEN,
-                                                                                                                FILTER_NUM,
-                                                                                                                STRIDE,
-                                                                                                                dataLayer.input.data_d,
-                                                                                                                conv.weights.data_d,
-                                                                                                                conv.bias.data_d,
-                                                                                                                conv.output.data_d );
+        convolution<<< FILTER_NUM, re_size, (cube_size + filter_size) * sizeof(double) >>>( i1,
+                                                                                            0,
+                                                                                            (NEIGHBOR + 1),
+                                                                                            z,
+                                                                                            COV_LEN,
+                                                                                            FILTER_NUM,
+                                                                                            STRIDE,
+                                                                                            dataLayer.input.data_d,
+                                                                                            conv.weights.data_d,
+                                                                                            conv.bias.data_d,
+                                                                                            conv.output.data_d );
         //cudaDeviceSynchronize();
 
-        maxpooling<<< FILTER_NUM, mre_size, 0/*, testStream[i1]*/ >>>( 0,
-                                                                       re_size,
-                                                                       POOLONG_LEN,
-                                                                       FILTER_NUM,
-                                                                       conv.output.data_d, 
-                                                                       pooling.output.data_d, 
-                                                                       pooling.bias.data_d );
+        maxpooling<<< FILTER_NUM, mre_size, 0 >>>( 0,
+                                                   re_size,
+                                                   POOLONG_LEN,
+                                                   FILTER_NUM,
+                                                   conv.output.data_d, 
+                                                   pooling.output.data_d, 
+                                                   pooling.bias.data_d );
         //cudaDeviceSynchronize();
 
-        fully_connect<<< NEU_NUM1, pooling_output_length, pooling_output_length * sizeof(double)/*, testStream[i1]*/ >>>( 0, 
-                                                                                                                      pooling_output_length,
-                                                                                                                      NEU_NUM1,
-                                                                                                                      pooling.output.data_d, 
-                                                                                                                      fulconnect.weights.data_d,
-                                                                                                                      fulconnect.bias.data_d,
-                                                                                                                      fulconnect.output.data_d );
+        fully_connect<<< NEU_NUM1, pooling_output_length, pooling_output_length * sizeof(double) >>>( 0, 
+                                                                                                      pooling_output_length,
+                                                                                                      NEU_NUM1,
+                                                                                                      pooling.output.data_d, 
+                                                                                                      fulconnect.weights.data_d,
+                                                                                                      fulconnect.bias.data_d,
+                                                                                                      fulconnect.output.data_d );
 
-        output_and_dvalue<<< 1, NEU_NUM2, (NEU_NUM1 + NEU_NUM2) * sizeof(double)/*, testStream[i1]*/ >>>( i1,
-                                                                                                          0,
-                                                                                                          NEU_NUM1,
-                                                                                                          NEU_NUM2,
-                                                                                                          false,
-                                                                                                          fulconnect.output.data_d,
-                                                                                                          out.weights.data_d,
-                                                                                                          out.bias.data_d,
-                                                                                                          out.output.data_d,
-                                                                                                          NULL,
-                                                                                                          NULL );
+        output_and_dvalue<<< 1, NEU_NUM2, (NEU_NUM1 + NEU_NUM2) * sizeof(double) >>>( i1,
+                                                                                      0,
+                                                                                      NEU_NUM1,
+                                                                                      NEU_NUM2,
+                                                                                      false,
+                                                                                      fulconnect.output.data_d,
+                                                                                      out.weights.data_d,
+                                                                                      out.bias.data_d,
+                                                                                      out.output.data_d,
+                                                                                      NULL,
+                                                                                      NULL );
         //cudaDeviceSynchronize();
 
         checkCudaErrors(cudaMemcpy(out.output.data_h, out.output.data_d, sizeof(double) * NEU_NUM2, cudaMemcpyDeviceToHost));
@@ -1255,16 +1258,17 @@ int main(int argc, char * argv[])
     }
 
     cout<<endl;
-    int device_choosed = 0;
+
+    if ( argc < 3 ) {
+        fprintf(stderr, "3 input arguments required!\n");
+        return 0;
+    }
+    int device_choosed = (int)atoi(argv[2]);
     fprintf(stdout, "[Cube CNN training with MBGD algo] Training implemented on Device %d.\n", device_choosed);
     
     cudaSetDevice(device_choosed);
 
     double *trainset, *trainlabels;
-    if ( argc != 2 ) {
-        fprintf(stderr, "2 input arguments required!\n");
-        return 0;
-    }
 
     MATFile * datamat = matOpen(argv[1], "r");
     mxArray * train = matGetVariable(datamat,"DataSet");
