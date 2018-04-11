@@ -23,4 +23,4 @@
    modify SRC in Makefile (src/hyper_version_mGPU.cu)
    recompile with Makefile
    <br>`bash` make
-   <br>`bash` ./bin/gcn data/DATASET.mat master_dev_id slave_dev_id
+   <br>`bash` ./bin/gcn data/DATASET.mat device_num master_dev_id
