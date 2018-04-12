@@ -21,7 +21,7 @@
    <br> * Device ID
 
 5. run GCN_version_2.0 ( Multiple GPUs verison )
-   modify SRC in Makefile (src/hyper_version_mGPU.cu)
-   recompile with Makefile
+   <br> modify SRC in Makefile (src/hyper_version_mGPU.cu)
+   <br> recompile with Makefile
    <br>`bash` make
    <br>`bash` ./bin/gcn data/DATASET.mat device_num master_dev_id
