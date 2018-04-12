@@ -1,4 +1,5 @@
 # GPU-based Cube CNN
+# Add supprot for multiple GPUs in version 2.0
 
 1. Install CUDA and nvcc compiler
 
