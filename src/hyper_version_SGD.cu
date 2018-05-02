@@ -17,9 +17,9 @@ const int GP_NUM = 2;//number of each group of maxpooling layer
 const int NEU_NUM1 = 100;
 const int NEU_NUM2 = 13;//number of output layer neurons 
 const int NEIGHBOR = 8;//number of neighbors
-double LEARN_RATE = 0.007;
+double learning_rate = 0.008;
 const double MIN_ERR = 0.0003;
-const int VALID_BATCH = 5;
+const int VALID_BATCH = 10;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -42,7 +42,7 @@ bool InitCUDA(){
 		fprintf(stderr,"There is no device supporting CUDA 1.x.\n");
 		return false;
 	}
-	cudaSetDevice(i);
+	cudaSetDevice(0);
 	return true;
 }
 
@@ -197,18 +197,18 @@ __global__ static void output(int tag, int train_idx, double * F1, double * omeg
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // backward propagation
-__global__ static void bp_output(int train_idx, double LEARN_RATE, double * labels, double * O2, double * bias2, double * delta_L_z)
+__global__ static void bp_output(int train_idx, double learning_rate, double * labels, double * O2, double * bias2, double * delta_L_z)
 {
 	int id = blockIdx.x * blockDim.x + threadIdx.x;
 	
     if(id < NEU_NUM2)
     {
 		delta_L_z[id] = (O2[id] - labels[id + train_idx * NEU_NUM2])/NEU_NUM2;
-		bias2[id] = bias2[id] - delta_L_z[id]*LEARN_RATE;
+		bias2[id] = bias2[id] - delta_L_z[id]*learning_rate;
 	}
 }
 
-__global__ static void bp_fully_connect(double LEARN_RATE, double * omega2,double * bias1, double * F1, double * delta_L_z, double *delta_f_a, double * delta_f_z)
+__global__ static void bp_fully_connect(double learning_rate, double * omega2,double * bias1, double * F1, double * delta_L_z, double *delta_f_a, double * delta_f_z)
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
@@ -217,7 +217,7 @@ __global__ static void bp_fully_connect(double LEARN_RATE, double * omega2,doubl
 		dfa[0][tid] = omega2[tid + bid*NEU_NUM2] * delta_L_z[tid];
 		__syncthreads();
 
-		omega2[tid + bid*NEU_NUM2] = omega2[tid + bid*NEU_NUM2] - LEARN_RATE * F1[bid] * delta_L_z[tid];
+		omega2[tid + bid*NEU_NUM2] = omega2[tid + bid*NEU_NUM2] - learning_rate * F1[bid] * delta_L_z[tid];
 
 		int length = NEU_NUM2;
 		int offset = (length - 1)/2 + 1;
@@ -233,12 +233,12 @@ __global__ static void bp_fully_connect(double LEARN_RATE, double * omega2,doubl
 		delta_f_a[bid] = dfa[0][0];
 		delta_f_z[bid] = dfa[0][0] * (1 + F1[bid]) * (1 - F1[bid]);
 		if(tid < 1){
-			bias1[bid] = bias1[bid] - LEARN_RATE * delta_f_z[bid];
+			bias1[bid] = bias1[bid] - learning_rate * delta_f_z[bid];
 		}
 	}
 }
 
-__global__ static void bp_maxpooling(int mre_size,double LEARN_RATE, int *mre_index, double * omega1,double *mre, double * delta_f_a, double * delta_f_z, double * delta_22)
+__global__ static void bp_maxpooling(int mre_size,double learning_rate, int *mre_index, double * omega1,double *mre, double * delta_f_a, double * delta_f_z, double * delta_22)
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
@@ -247,7 +247,7 @@ __global__ static void bp_maxpooling(int mre_size,double LEARN_RATE, int *mre_in
 		mid[0][tid] = omega1[tid + bid*NEU_NUM1] * delta_f_z[tid];
 		__syncthreads();
 
-		omega1[tid + bid*NEU_NUM1] = omega1[tid + bid*NEU_NUM1] - LEARN_RATE*(mre[bid]*delta_f_z[tid]);
+		omega1[tid + bid*NEU_NUM1] = omega1[tid + bid*NEU_NUM1] - learning_rate*(mre[bid]*delta_f_z[tid]);
 
 		int length = NEU_NUM1;
 		int offset = (length - 1)/2 + 1;
@@ -265,7 +265,7 @@ __global__ static void bp_maxpooling(int mre_size,double LEARN_RATE, int *mre_in
 	}
 }
 
-__global__ static void bp_convolution(int i0, double LEARN_RATE, int z, int mre_num,int re_size, int * mre_index, double * delta_22, double * data, double * filters, double * bias0)
+__global__ static void bp_convolution(int i0, double learning_rate, int z, int mre_num,int re_size, int * mre_index, double * delta_22, double * data, double * filters, double * bias0)
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
@@ -292,10 +292,10 @@ __global__ static void bp_convolution(int i0, double LEARN_RATE, int z, int mre_
 		}
 
 		delta_k_w[0][tid] = delta_k_w[0][tid]/mre_num;
-		filters[tid + bid*(NEIGHBOR+1)*P_NUM] = filters[tid + bid*(NEIGHBOR+1)*P_NUM] - LEARN_RATE*delta_k_w[0][tid];
+		filters[tid + bid*(NEIGHBOR+1)*P_NUM] = filters[tid + bid*(NEIGHBOR+1)*P_NUM] - learning_rate*delta_k_w[0][tid];
 		
 		if(tid < 1)
-			bias0[bid] = bias0[bid] - LEARN_RATE*(mid/mre_num);
+			bias0[bid] = bias0[bid] - learning_rate*(mid/mre_num);
 		
 	}
 }
@@ -400,7 +400,6 @@ double training(double * data, double * labels, int x, int y, int z){
 	}
 	int test_size = (data_size-1)/5 + 1;
 	int train_size = data_size - test_size;
-	fprintf(stdout,"train_size:%d  test_size:%d\n", train_size, test_size);
 	int * train_index = new int [train_size * (NEIGHBOR + 1)];
     int * test_index = new int [test_size * (NEIGHBOR + 1)];
 
@@ -545,7 +544,7 @@ double training(double * data, double * labels, int x, int y, int z){
 	cudaDeviceSynchronize();
 	end = clock();
 	double tt = double(end - start);
-	fprintf(stdout,"Preprocessing Done. (%lfs)\n",tt/CLOCKS_PER_SEC);
+	fprintf(stdout,"[Samples prepared with %d Nearest-Neighbor-Pixels Strategy] Proportion of Training samples: %d%%  Execution time: %.3f sec\n", NEIGHBOR, 80, tt/CLOCKS_PER_SEC);
 
 	SAFE_CALL(cudaFree(gpu_data));
 	SAFE_CALL(cudaFree(gpu_train_index));
@@ -663,9 +662,15 @@ double training(double * data, double * labels, int x, int y, int z){
     double cur_min = 1;
 	int count = 1;
     int tag = 1; // for training
+    int max_iter = 300;
 	start = clock();
-	for(int j=0; j<300; j++){
+
+    clock_t iter_start, iter_stop;
+    fprintf(stdout, "[Cube CNN training with SGD algo] lr = %lf\n", learning_rate);
+	for(int j=0; j<max_iter; j++)
+    {
 		loss = 0;
+        iter_start = clock();
 		for(int i0=0; i0<train_size; i0++)
         {
 			convolution<<<FILTERS_NUM, re_size, (NEIGHBOR+1) * z * sizeof(double)>>>(i0,gpu_processed_train,gpu_filters, gpu_re,gpu_bias0,z,re_size);
@@ -677,13 +682,13 @@ double training(double * data, double * labels, int x, int y, int z){
 			output<<<1,NEU_NUM2>>>(tag, i0, gpu_F1, gpu_omega2, gpu_bias2, gpu_O2, gpu_processed_labels, gpu_loss);
 
 			// backward propagation
-			bp_output<<<1,NEU_NUM2>>>(i0, LEARN_RATE, gpu_processed_labels, gpu_O2, gpu_bias2, gpu_delta_Lz);
+			bp_output<<<1,NEU_NUM2>>>(i0, learning_rate, gpu_processed_labels, gpu_O2, gpu_bias2, gpu_delta_Lz);
 			
-			bp_fully_connect<<<NEU_NUM1,NEU_NUM2>>>(LEARN_RATE, gpu_omega2, gpu_bias1, gpu_F1, gpu_delta_Lz, gpu_delta_fa, gpu_delta_fz);
+			bp_fully_connect<<<NEU_NUM1,NEU_NUM2>>>(learning_rate, gpu_omega2, gpu_bias1, gpu_F1, gpu_delta_Lz, gpu_delta_fa, gpu_delta_fz);
 			
-			bp_maxpooling<<<mre_size,NEU_NUM1>>>(mre_size, LEARN_RATE, gpu_mre_index, gpu_omega1, gpu_mre, gpu_delta_fa, gpu_delta_fz, gpu_delta_22);
+			bp_maxpooling<<<mre_size,NEU_NUM1>>>(mre_size, learning_rate, gpu_mre_index, gpu_omega1, gpu_mre, gpu_delta_fa, gpu_delta_fz, gpu_delta_22);
 			
-			bp_convolution<<<FILTERS_NUM, (NEIGHBOR+1)*P_NUM, (NEIGHBOR+1) * z * sizeof(double)>>>(i0, LEARN_RATE,z,mre_num,re_size,gpu_mre_index,gpu_delta_22,gpu_processed_train,gpu_filters, gpu_bias0);
+			bp_convolution<<<FILTERS_NUM, (NEIGHBOR+1)*P_NUM, (NEIGHBOR+1) * z * sizeof(double)>>>(i0, learning_rate,z,mre_num,re_size,gpu_mre_index,gpu_delta_22,gpu_processed_train,gpu_filters, gpu_bias0);
 
 		}
 
@@ -692,8 +697,14 @@ double training(double * data, double * labels, int x, int y, int z){
         	logloss[j] = single_rate;
 		if(single_rate < MIN_ERR)
 			break;
-		
-		fprintf(stdout,"Iteration %d,	loss = %lf;\n",j+1,single_rate);
+
+        iter_stop = clock();
+        float iter_time = float(iter_stop - iter_start) / CLOCKS_PER_SEC;
+		char str[50];
+        sprintf(str, "%d", j + 1);
+        strcat(str, ",");
+		fprintf(stdout,"[Cube CNN training with SGD algo. Execution time: %.3f sec] Iteration %-4s loss = %lf;\n", iter_time, str, single_rate);
+
 		insert_line(correct_rate,single_rate);
 		double new_min = *min_element(correct_rate, correct_rate + VALID_BATCH);
         	if(cur_min > new_min){
@@ -704,17 +715,17 @@ double training(double * data, double * labels, int x, int y, int z){
             		count++;
         	}
         	if(count >= VALID_BATCH) {
-            		LEARN_RATE = LEARN_RATE * 0.9;
-            		fprintf(stdout,"LEARN_RATE:%lf\n",LEARN_RATE);
+            		learning_rate = learning_rate * 0.9;
+            		fprintf(stdout,"[Cube CNN training with SGD algo] lr = %lf\n", learning_rate);
             		count = 1;
             		cur_min = new_min;
         	}		
 	}
 
-	fprintf(stdout,"Training completed!\n");
+    fprintf(stdout, "[Cube CNN training with SGD algo] ");
 	end = clock();
 	tt = double(end - start);
-	fprintf(stdout,"Using time of training:%lfs\n",tt/CLOCKS_PER_SEC);
+	fprintf(stdout,"Completed! Global Execution time is %.3f sec\n", tt/CLOCKS_PER_SEC);
 
 	start = clock();
 	SAFE_CALL(cudaMemcpy(filters, gpu_filters, sizeof(double) * (NEIGHBOR+1) * P_NUM * FILTERS_NUM, cudaMemcpyDeviceToHost));
@@ -777,39 +788,57 @@ double training(double * data, double * labels, int x, int y, int z){
 	}
 	end = clock();
 	tt = double(end - start);
-	fprintf(stdout,"Using time of testing:%lfs\n",tt/CLOCKS_PER_SEC);
+	fprintf(stdout,"[Cube CNN testing] Execution time is %.3f sec. ", tt/CLOCKS_PER_SEC);
 	return count0/test_size;
 }
 
 int main(int argc, char * argv[])
 {
+    fprintf(stdout, "[Cube CNN training with SGD algo] ");
   	if(!InitCUDA()){
 		return 0;
 	}
 	printf("CUDA initialized.\n");
 
-	clock_t start,end;
+    fprintf(stdout, "[Cube CNN training with SGD algo] Available Device List: ");
+    int deviceCount = 0;
+    cudaGetDeviceCount(&deviceCount);
+
+    int device = 0;
+    for ( device = 0; device < deviceCount; device ++ )
+    {
+        cudaDeviceProp deviceProp;
+        cudaGetDeviceProperties(&deviceProp, device);
+        if ( device == 0 )
+            printf("Device %d -- %s(Default)  ", device, deviceProp.name);
+        else
+            printf("Device %d -- %s  ", device, deviceProp.name);
+    }
+    cout << endl;
 
 	double *trainset,*trainlabels;
-	if(argc!=2){
-		fprintf(stderr, "4 input arguments required!");
+	if ( argc!=3 ) {
+		fprintf(stderr, "3 input arguments required!");
 	}
 
 	MATFile * datamat = matOpen(argv[1], "r");
     mxArray * train = matGetVariable(datamat,"DataSet");
     mxArray * labels = matGetVariable(datamat,"labels");
     
+    int device_choosed = (int)atoi(argv[2]);
+    fprintf(stdout, "[Cube CNN training with SGD algo] Training implemented on Device %d.\n", device_choosed);
+
+    SAFE_CALL(cudaSetDevice(device_choosed));
+
     trainset = (double*)mxGetData(train);
     trainlabels = (double*)mxGetData(labels);
     
     const mwSize  * dim;
     dim = mxGetDimensions(train);
 
-    start = clock();
 	double correct = training(trainset, trainlabels, dim[0], dim[1], dim[2]);
-	end = clock();
-    fprintf(stdout,"Correct Rate:%lf(300 iterations, train size, train:test=8:2, 0.008->0.001)\n",correct);
-	double usetime = double(end - start);
-	fprintf(stdout, "Using time of the whole procedure:%lfs\n",usetime/CLOCKS_PER_SEC);
+    fprintf(stdout,"Accuracy: %.3f%% \n", correct * 100);
+	
+    cudaDeviceReset();
 	return 0;
 }
