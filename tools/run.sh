@@ -1,5 +1,6 @@
 #/bin/sh
 dataset=$1
+device=$3
 
 acc=""
 time=""
@@ -7,7 +8,7 @@ output=`echo $1 | cut -d . -f 1`
 output=${output}"_results.csv"
 for j in $(seq 1 $2)
 do
-    ./bin/gcn $dataset > log.txt
+    ./bin/gcn $dataset $device > log.txt
     echo -n $j >> $output
     echo -n " " >> $output
     acc=$(grep Accuracy log.txt | cut -d " " -f 7,10)
