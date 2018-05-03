@@ -17,10 +17,10 @@ const int POOLONG_LEN = 2;
 const int NEU_NUM1 = 100;
 const int NEU_NUM2 = 13;
 const int NEIGHBOR = 8;
-double learning_rate = 0.2;
+double learning_rate = 0.5;
 const double MIN_ERR = 0.0001;
 const int VALID_BATCH = 5;
-const int DATA_BATCH = 10;
+const int DATA_BATCH = 100;
 
 //Initialize CUDA
 bool InitCUDA(){
@@ -102,7 +102,7 @@ struct Layer{
     ~Layer();
 
 private:
-    void allocMemcpyCuda(int size, double ** data_h, double ** data_d, bool isMalloc, bool isCopyback);
+    void allocMemcpyCuda(int size, double ** data_h, double ** data_d, bool isMallochost, bool isInitalize);
 };
 
 void Layer::allocMemcpyCuda(int size, double **data_h, double **data_d, bool isMallochost, bool isInitalize)
@@ -150,25 +150,29 @@ Layer::Layer (int input_size, int weights_size, int bias_size, int output_size, 
 
 Layer::~Layer ()
 {
-    if (input.data_h != NULL)
+    if ( input.data_h != NULL )
         delete [] input.data_h;
-    if(weights.data_h != NULL)
+    if ( weights.data_h != NULL )
         delete [] weights.data_h;
-    if(output.data_h != NULL)
+    if ( output.data_h != NULL )
         delete [] output.data_h;
-    if(bias.data_h != NULL)
+    if ( bias.data_h != NULL )
         delete [] bias.data_h;
-    if(input.data_d != NULL)
+    if ( deltaW.data_h != NULL )
+        delete [] deltaW.data_h;
+    if ( deltaB.data_h != NULL )
+        delete [] deltaB.data_h;
+    if ( input.data_d != NULL )
         cudaFree(input.data_d);
-    if(output.data_d != NULL)
+    if ( output.data_d != NULL )
         cudaFree(output.data_d);
-    if(weights.data_d != NULL)
+    if ( weights.data_d != NULL )
         cudaFree(weights.data_d);
-    if(bias.data_d != NULL)
+    if ( bias.data_d != NULL )
         cudaFree(bias.data_d);
-    if(deltaW.data_d != NULL)
+    if ( deltaW.data_d != NULL )
         cudaFree(deltaW.data_d);
-    if(deltaB.data_d != NULL)
+    if ( deltaB.data_d != NULL )
         cudaFree(deltaB.data_d);
 }
 
@@ -461,7 +465,8 @@ __global__ static void bp_convolution( int data_id,
                                        double * pre_deltaB, 
                                        double * deltaW, 
                                        double * deltaB, 
-                                       double * data )
+                                       double * data,
+                                       double * output )
 {
     int tid = threadIdx.x;
     int bid = blockIdx.x;
@@ -479,7 +484,8 @@ __global__ static void bp_convolution( int data_id,
         double mid0 = 0, mid1 = 0;
         for( int i = 0; i < re_size; i ++ ) {
             mid0 = mid0 + pre_deltaB[i + bid * re_size + batch_id * output_size] * data_tmp[tid + i * perLayerSize * stride];
-            mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * output_size];
+            mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * output_size] * (1 + output[i + bid * re_size + batch_id * output_size])
+                                                                                 * (1 - output[i + bid * re_size + batch_id * output_size]);
         }
 
         deltaW[tid + bid * filter_size + batch_id * filter_size * filter_num] = mid0 / re_size;
@@ -1002,7 +1008,8 @@ double training(double * data, double * labels, int x, int y, int z)
                                                                                                        pooling.deltaW.data_d,
                                                                                                        conv.deltaW.data_d,
                                                                                                        conv.deltaB.data_d,
-                                                                                                       dataLayer.input.data_d );
+                                                                                                       dataLayer.input.data_d,
+                                                                                                       conv.output.data_d );
 
             } //i1
 
