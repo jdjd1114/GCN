@@ -475,7 +475,8 @@ __global__ static void bp_convolution( int data_id,
                                        float * pre_deltaB, 
                                        float * deltaW, 
                                        float * deltaB, 
-                                       float * data )
+                                       float * data,
+                                       float * output )
 {
     int tid = threadIdx.x;
     int bid = blockIdx.x;
@@ -493,7 +494,8 @@ __global__ static void bp_convolution( int data_id,
         float mid0 = 0, mid1 = 0;
         for ( int i = 0; i < re_size; i ++ ) {
             mid0 = mid0 + pre_deltaB[i + bid * re_size + batch_id * output_size] * data_tmp[tid + i * perLayerSize * stride];
-            mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * output_size];
+            mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * output_size] * (1 + output[i + bid * re_size + batch_id * output_size])
+                                                                                 * (1 - output[i + bid * re_size + batch_id * output_size]);
         }
 
         deltaW[tid + bid * filter_size + batch_id * filter_size * filter_num] = mid0 / re_size;
@@ -1001,7 +1003,8 @@ float training(float * data, double * labels, int x, int y, int z){
                                                                                                        pooling.deltaW.data_d,
                                                                                                        conv.deltaW.data_d,
                                                                                                        conv.deltaB.data_d,
-                                                                                                       dataLayer.input.data_d );
+                                                                                                       dataLayer.input.data_d,
+                                                                                                       conv.output.data_d );
 
             }
 
