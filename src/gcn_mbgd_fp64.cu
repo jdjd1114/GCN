@@ -661,7 +661,7 @@ void shuffle(int * data, int * labels, int dim_row, int width)
 {
     int index,  i;
     int temp;
-    double tmp;
+    int tmp;
     srand(time(NULL));
     for ( i = 0; i < width; i ++ )
     {
