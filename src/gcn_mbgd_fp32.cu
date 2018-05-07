@@ -664,8 +664,7 @@ void insert_line(float * a, float b){
 // shuffle
 void shuffle(int * data, int * labels, int dim_row, int width){
     int index,  i;
-    int temp;
-    float tmp;
+    int temp, tmp;
     srand(time(NULL));
     for(i=0; i<width; i++){
         index=rand()%(width-i) + i;
