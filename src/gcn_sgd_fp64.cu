@@ -298,7 +298,7 @@ __global__ static void output_and_loss( bool tag,
                                         double * weights, 
                                         double * bias, 
                                         double * output,
-                                        double * labels,
+                                        int * labels,
                                         double * dValue,
                                         double * loss ) 
 {
@@ -341,9 +341,9 @@ __global__ static void output_and_loss( bool tag,
             dValue[id] = (output[id] - labels[id + train_idx * output_size]) / output_size;
 
             if ( train_idx == 0 )
-                loss[0] = 0;
+                *loss = 0;
 
-            int loss_offset = input_size + output_size + id;
+            int loss_offset  = input_size + output_size + id;
             tmp[loss_offset] = labels[id + train_idx * output_size] * log(output[id]) + 
                                (1 - labels[id + train_idx * output_size]) * log(1 - output[id]);
             __syncthreads();
@@ -362,14 +362,13 @@ __global__ static void output_and_loss( bool tag,
              }
  
             if ( id < 1 )
-                loss[0] = loss[0] - tmp[input_size + output_size] / output_size;
+                *loss = *loss - tmp[input_size + output_size] / output_size;
          }
     }
 }
 
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// backward propagation
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////// backward propagation
 __global__ static void bp_fully_connect( int input_size,
                                          int output_size,
                                          double learning_rate, 
@@ -474,12 +473,12 @@ __global__ static void preprocessing(int iter, double * data, int * train_index,
     int threadNum = blockDim.x * gridDim.x;
     int id = tid + iter * threadNum;
 
-    if (id < train_size){
-        int idx = id * (NEIGHBOR+1) * z;
+    if ( id < train_size ) {
+        int idx = id * (NEIGHBOR + 1) * z;
         int i, j;
-        for (i=0; i<z; i++){
-            for (j=0; j<(NEIGHBOR+1); j++){
-                processed_data[idx] = data[train_index[j + id*(NEIGHBOR+1)] + i * x*y];
+        for ( i = 0; i < z; i ++ ) {
+            for ( j = 0; j < (NEIGHBOR + 1); j ++ ) {
+                processed_data[idx] = data[train_index[j + id * (NEIGHBOR + 1)] + i * x * y];
                 idx = idx + 1;    
             }
         }
@@ -524,24 +523,24 @@ void insert_line(double * a, double b){
 }
 
 // shuffle
-void shuffle(int * data, double * labels, int dim_row, int width){
+void shuffle(int * data, int * labels, int dim_row, int width){
     int index,  i;
-    int temp;
-    double tmp;
+    int temp, tmp;
     srand(time(NULL));
-    for(i=0; i<width; i++){
-        index=rand()%(width-i) + i;
-        if(index != i){
-            for(int j=0; j<dim_row; j++){
-                temp = data[j + i*dim_row];
-                data[j + i*dim_row] = data[j +index*dim_row];
-                data[j + index*dim_row] = temp;
+
+    for ( i = 0; i < width; i ++ ) {
+        index=rand() % (width - i) + i;
+        if ( index != i ) {
+            for ( int j = 0; j < dim_row; j ++ ) {
+                temp = data[j + i * dim_row];
+                data[j + i * dim_row] = data[j +index * dim_row];
+                data[j + index * dim_row] = temp;
             }
 
-            for(int j=0; j<NEU_NUM2; j++){
-                tmp = labels[j + i*NEU_NUM2];
-                labels[j + i*NEU_NUM2] = labels[j + index*NEU_NUM2];
-                labels[j + index*NEU_NUM2] = tmp;
+            for ( int j = 0; j < NEU_NUM2; j ++) {
+                tmp = labels[j + i * NEU_NUM2];
+                labels[j + i * NEU_NUM2] = labels[j + index * NEU_NUM2];
+                labels[j + index * NEU_NUM2] = tmp;
             }
         }
     }
@@ -556,126 +555,127 @@ double training(double * data, double * labels, int x, int y, int z){
     double * gpu_processed_test;
     int * gpu_train_index;
     int * gpu_test_index;
-    double * gpu_processed_labels;
+    int * gpu_processed_labels;
 
     int data_size = 0;
     int * data_index = new int [x*y];
-    for(int i=0; i<x*y; i++){
-        if(labels[i] != 0){
-            data_index[data_size]=i;
+    for ( int i = 0; i < x * y; i ++ ) {
+        if ( labels[i] != 0 ) {
+            data_index[data_size] = i;
             data_size ++;
         }
     }
-    int test_size = (data_size-1)/5 + 1;
+    int test_size = (data_size - 1) / 5 + 1;
     int train_size = data_size - test_size;
     int * train_index = new int [train_size * (NEIGHBOR + 1)];
     int * test_index = new int [test_size * (NEIGHBOR + 1)];
 
-    double * processed_labels = new double [train_size * NEU_NUM2]();
+    int * processed_labels = new int [train_size * NEU_NUM2]();
     double * test_labels = new double [test_size]();
 
-    int tr=0, te=0;
-    for (int i=0; i<data_size; i++){
-        if (i%5 != 0){
-            train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1)] = data_index[i];
-            if(NEIGHBOR == 4)
+    int tr = 0, te = 0;
+    for ( int i = 0; i < data_size; i ++ ) {
+        if ( i % 5 != 0 ) {
+            train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1)] = data_index[i];
+            if ( NEIGHBOR == 4 )
             {
-                train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = data_index[i] - 1;
-                train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-                train_index[0 + tr * (NEIGHBOR+1)] = data_index[i] - x;
-                train_index[NEIGHBOR + tr * (NEIGHBOR+1)] = data_index[i] + x;
+                train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) - 1] = data_index[i] - 1;
+                train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) + 1] = data_index[i] + 1;
+                train_index[0 + tr * (NEIGHBOR + 1)] = data_index[i] - x;
+                train_index[NEIGHBOR + tr * (NEIGHBOR + 1)] = data_index[i] + x;
                 
 
-                if((data_index[i] % x) == 0){//first row
-                    train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1];
+                if ( (data_index[i] % x) == 0 ) {//first row
+                    train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) - 1] = train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) + 1];
                 }
-                if((data_index[i] % x) == (x-1)){//last row
-                    train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1] = train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1];
+                if ( (data_index[i] % x) == (x - 1) ) { //last row
+                    train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) + 1] = train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) - 1];
                 }
-                if((data_index[i]/x) == 0){//first column
-                    train_index[0 + tr * (NEIGHBOR+1)] = train_index[NEIGHBOR + tr * (NEIGHBOR+1)];
+                if ( (data_index[i] / x) == 0 ) { //first column
+                    train_index[0 + tr * (NEIGHBOR + 1)] = train_index[NEIGHBOR + tr * (NEIGHBOR + 1)];
                 }
-                if((data_index[i]/x) == (y-1)){//last column
-                    train_index[NEIGHBOR + tr * (NEIGHBOR+1)] = train_index[0 + tr * (NEIGHBOR+1)];
+                if ( (data_index[i] / x) == (y - 1) ) {//last column
+                    train_index[NEIGHBOR + tr * (NEIGHBOR + 1)] = train_index[0 + tr * (NEIGHBOR + 1)];
                 }
             }
-            if(NEIGHBOR == 8)
+            if ( NEIGHBOR == 8 )
             {
-                train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) - 1] = data_index[i] - 1;
-                train_index[(NEIGHBOR/2) + tr * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-                for(int j0=0;j0<3;j0++){
-                    train_index[j0 + tr * (NEIGHBOR+1)] = data_index[i] - 1 - x + j0;
-                    train_index[j0+6 + tr * (NEIGHBOR+1)] = data_index[i] - 1 + x + j0;
+                train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) - 1] = data_index[i] - 1;
+                train_index[(NEIGHBOR / 2) + tr * (NEIGHBOR + 1) + 1] = data_index[i] + 1;
+                for ( int j0 = 0; j0 < 3; j0 ++ ) {
+                    train_index[j0 + tr * (NEIGHBOR + 1)] = data_index[i] - 1 - x + j0;
+                    train_index[j0 + 6 + tr * (NEIGHBOR + 1)] = data_index[i] - 1 + x + j0;
                 }
 
-                if((data_index[i] % x) == 0){//first row
-                    for (int j=0; j<3; j++)
-                        train_index[j*3 + tr*(NEIGHBOR+1)] = train_index[j*3+2 + tr*(NEIGHBOR+1)];
+                if ( (data_index[i] % x) == 0 ) { //first row
+                    for ( int j = 0; j < 3; j ++ )
+                        train_index[j * 3 + tr * (NEIGHBOR + 1)] = train_index[j * 3 + 2 + tr * (NEIGHBOR + 1)];
                 }
-                if((data_index[i] % x) == (x-1)){//last row
-                    for(int j=0;j<3;j++)
-                            train_index[j*3+2 + tr*(NEIGHBOR+1)] = train_index[j*3 + tr*(NEIGHBOR+1)];
+                if ( (data_index[i] % x) == (x - 1) ) { //last row
+                    for ( int j = 0; j < 3; j ++ )
+                            train_index[j * 3 + 2 + tr * (NEIGHBOR + 1)] = train_index[j * 3 + tr * (NEIGHBOR + 1)];
                 }
-                if((data_index[i]/x) == 0){//first column
-                    for(int j=0;j<3;j++)
-                        train_index[j + tr*(NEIGHBOR+1)] = train_index[j+6 + tr*(NEIGHBOR+1)];
+                if ( (data_index[i] / x) == 0 ) {//first column
+                    for ( int j = 0; j < 3; j ++ )
+                        train_index[j + tr * (NEIGHBOR + 1)] = train_index[j + 6 + tr * (NEIGHBOR + 1)];
                 }
-                if((data_index[i]/x) == (y-1)){//last column
-                    for(int j=0;j<3;j++)
-                        train_index[j+6  + tr*(NEIGHBOR+1)] = train_index[j + tr*(NEIGHBOR+1)];
+                if ( (data_index[i] / x) == (y - 1) ) { //last column
+                    for ( int j = 0; j < 3; j ++ )
+                        train_index[j + 6  + tr * (NEIGHBOR + 1)] = train_index[j + tr * (NEIGHBOR + 1)];
                 }
             }
 
-            int mid = int(labels[data_index[i]])-1 + tr*NEU_NUM2;
+            int mid = int(labels[data_index[i]]) - 1 + tr * NEU_NUM2;
             processed_labels[mid] = 1;
             tr = tr + 1;
         }
-        if(i%5 == 0){
-            test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1)] = data_index[i];//当前像素索引
-            if(NEIGHBOR == 4)
+        if ( i % 5 == 0 ) {
+            test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1)] = data_index[i];
+            if ( NEIGHBOR == 4 )
             {
-                test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = data_index[i] - 1;
-                test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-                test_index[0 + te * (NEIGHBOR+1)] = data_index[i] - x;
-                test_index[NEIGHBOR+ te * (NEIGHBOR+1)] = data_index[i] + x;
+                test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) - 1] = data_index[i] - 1;
+                test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) + 1] = data_index[i] + 1;
+                test_index[0 + te * (NEIGHBOR + 1)] = data_index[i] - x;
+                test_index[NEIGHBOR + te * (NEIGHBOR + 1)] = data_index[i] + x;
 
-                if((data_index[i] % x) == 0){//first row
-                    test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1];
+                if ( (data_index[i] % x) == 0 ) { //first row
+                    test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) - 1] = test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) + 1];
                 }
-                if((data_index[i] % x) == (x-1)){//last row
-                    test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1] = test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1];
+                if ( (data_index[i] % x) == (x - 1) ) { //last row
+                    test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) + 1] = test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) - 1];
                 }
-                if((data_index[i]/x) == 0){//first column
-                    test_index[0 + te * (NEIGHBOR+1)] = test_index[NEIGHBOR+ te * (NEIGHBOR+1)];
+                if ( (data_index[i] / x) == 0 ) { //first column
+                    test_index[0 + te * (NEIGHBOR + 1)] = test_index[NEIGHBOR + te * (NEIGHBOR + 1)];
                 }
-                if((data_index[i]/x) == (y-1)){//last column
-                    test_index[NEIGHBOR+ te * (NEIGHBOR+1)] = test_index[0 + te * (NEIGHBOR+1)];
+                if ( (data_index[i] / x) == (y - 1) ) { //last column
+                    test_index[NEIGHBOR + te * (NEIGHBOR + 1)] = test_index[0 + te * (NEIGHBOR + 1)];
                 }
             }
-            if(NEIGHBOR == 8)
+
+            if ( NEIGHBOR == 8 )
             {
-                test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) - 1] = data_index[i] - 1;
-                test_index[(NEIGHBOR/2) + te * (NEIGHBOR+1) + 1] = data_index[i] + 1;
-                for(int j0=0;j0<3;j0++){
-                    test_index[j0 + te * (NEIGHBOR+1)] = data_index[i] - 1 - x + j0;
-                    test_index[j0+6 + te * (NEIGHBOR+1)] = data_index[i] - 1 + x + j0;
+                test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) - 1] = data_index[i] - 1;
+                test_index[(NEIGHBOR / 2) + te * (NEIGHBOR + 1) + 1] = data_index[i] + 1;
+                for ( int j0 = 0; j0 < 3; j0 ++ ) {
+                    test_index[j0 + te * (NEIGHBOR + 1)] = data_index[i] - 1 - x + j0;
+                    test_index[j0 + 6 + te * (NEIGHBOR + 1)] = data_index[i] - 1 + x + j0;
                 }
 
-                if((data_index[i] % x) == 0){//first row
-                    for (int j=0; j<3; j++)
-                        test_index[j*3 + te*(NEIGHBOR+1)] = test_index[j*3+2 + te*(NEIGHBOR+1)];
+                if ( (data_index[i] % x ) == 0 ) { //first row
+                    for ( int j = 0; j < 3; j ++ )
+                        test_index[j * 3 + te * (NEIGHBOR + 1)] = test_index[j * 3 + 2 + te * (NEIGHBOR + 1)];
                 }
-                if((data_index[i] % x) == (x-1)){//last row
-                    for(int j=0;j<3;j++)
-                        test_index[j*3+2 + te*(NEIGHBOR+1)] = test_index[j*3 + te*(NEIGHBOR+1)];
+                if ( (data_index[i] % x) == (x - 1) ) {//last row
+                    for ( int j = 0; j < 3; j ++ )
+                        test_index[j * 3 + 2 + te * (NEIGHBOR + 1)] = test_index[j * 3 + te * (NEIGHBOR + 1)];
                 }
-                if((data_index[i]/x) == 0){//first column
-                    for(int j=0;j<3;j++)
-                        test_index[j + te*(NEIGHBOR+1)] = test_index[j+6 + te*(NEIGHBOR+1)];
+                if ( (data_index[i] / x ) == 0 ) { //first column
+                    for ( int j = 0; j < 3; j ++ )
+                        test_index[j + te * (NEIGHBOR + 1)] = test_index[j + 6 + te * (NEIGHBOR + 1)];
                 }
-                if((data_index[i]/x) == (y-1)){//last column
-                    for(int j=0;j<3;j++)
-                        test_index[j+6  + te*(NEIGHBOR+1)] = test_index[j + te*(NEIGHBOR+1)];
+                if ( (data_index[i] / x) == (y - 1) ) { //last column
+                    for ( int j = 0; j < 3; j ++ )
+                        test_index[j + 6 + te * (NEIGHBOR + 1)] = test_index[j + te * (NEIGHBOR + 1)];
                 }
             }
             test_labels[te] = labels[data_index[i]];
@@ -714,6 +714,9 @@ double training(double * data, double * labels, int x, int y, int z){
     double tt = double(end - start);
     fprintf(stdout,"[Samples prepared with %d Nearest-Neighbor-Pixels Strategy] Proportion of Training samples: %d%%  Execution time: %.3f sec\n", NEIGHBOR, 80, tt/CLOCKS_PER_SEC);
 
+    delete [] data_index;
+    delete [] train_index;
+    delete [] test_index;
     checkCudaErrors(cudaFree(gpu_data));
     checkCudaErrors(cudaFree(gpu_train_index));
     checkCudaErrors(cudaFree(gpu_test_index));
@@ -721,7 +724,7 @@ double training(double * data, double * labels, int x, int y, int z){
 
     
     int re_size = 0;
-    for ( int i = 0; i + COV_LEN < z; i += STRIDE){
+    for ( int i = 0; i + COV_LEN < z; i += STRIDE ) {
         re_size ++;
     }
 
@@ -735,10 +738,12 @@ double training(double * data, double * labels, int x, int y, int z){
 
     double * gpu_loss;
     
-    checkCudaErrors(cudaMalloc((void**) &gpu_processed_labels, sizeof(double) * train_size * NEU_NUM2));
-    checkCudaErrors(cudaMemcpy(gpu_processed_labels,processed_labels,sizeof(double) * train_size * NEU_NUM2,cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMalloc((void**) &gpu_processed_labels, sizeof(int) * train_size * NEU_NUM2));
+    checkCudaErrors(cudaMemcpy(gpu_processed_labels,processed_labels,sizeof(int) * train_size * NEU_NUM2,cudaMemcpyHostToDevice));
 
-    checkCudaErrors(cudaMalloc((void **) &gpu_loss, sizeof(double) * 2));
+    checkCudaErrors(cudaMalloc((void **) &gpu_loss, sizeof(double)));
+    
+    delete [] processed_labels;
     
     double loss;
     double * logloss = new double [300]();
@@ -752,6 +757,10 @@ double training(double * data, double * labels, int x, int y, int z){
     bool tag = true; // for training
     int max_iter = 300;
     start = clock();
+
+    DataLayer trainData(train_size * cube_size, train_size * NEU_NUM2);
+    trainData.input.data_d = gpu_processed_train;
+    trainData.labels.data_d = gpu_processed_labels;
 
     Layer conv(cube_size, filter_size * FILTERS_NUM, FILTERS_NUM, pooling_input_length, false);
     Layer maxpol(pooling_input_length, pooling_input_length, pooling_output_length, pooling_output_length, false);
@@ -774,7 +783,7 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                                  COV_LEN,
                                                                                                  FILTERS_NUM,
                                                                                                  STRIDE,
-                                                                                                 gpu_processed_train,
+                                                                                                 trainData.input.data_d,
                                                                                                  conv.weights.data_d, 
                                                                                                  conv.bias.data_d,
                                                                                                  conv.output.data_d );
@@ -801,7 +810,7 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                             outp.weights.data_d, 
                                                                                             outp.bias.data_d, 
                                                                                             outp.output.data_d,
-                                                                                            gpu_processed_labels,
+                                                                                            trainData.labels.data_d,
                                                                                             outp.deltaB.data_d,
                                                                                             gpu_loss );
 
@@ -840,7 +849,7 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                                       maxpol.deltaW.data_d,
                                                                                                       conv.weights.data_d,
                                                                                                       conv.bias.data_d, 
-                                                                                                      gpu_processed_train, 
+                                                                                                      trainData.input.data_d, 
                                                                                                       conv.output.data_d );
 
         }
@@ -926,6 +935,9 @@ double training(double * data, double * labels, int x, int y, int z){
     double right = 0;
     double count0 = 0;
     tag = false; // for testing
+    DataLayer testData(test_size * cube_size, test_size * NEU_NUM2);
+    testData.input.data_d = gpu_processed_test;
+
     for ( int i1 = 0; i1 < test_size; i1 ++ ) {
         convolution<<< FILTERS_NUM,re_size, (cube_size + filter_size) * sizeof(double) >>>( i1,
                                                                                             (NEIGHBOR + 1),
@@ -933,7 +945,7 @@ double training(double * data, double * labels, int x, int y, int z){
                                                                                             COV_LEN,
                                                                                             FILTERS_NUM,
                                                                                             STRIDE,
-                                                                                            gpu_processed_test,
+                                                                                            testData.input.data_d,
                                                                                             conv.weights.data_d,
                                                                                             conv.bias.data_d, 
                                                                                             conv.output.data_d );
@@ -972,6 +984,12 @@ double training(double * data, double * labels, int x, int y, int z){
     end = clock();
     tt = double(end - start);
     fprintf(stdout,"[Cube CNN testing] Execution time is %.3f sec. ", tt/CLOCKS_PER_SEC);
+
+    checkCudaErrors(cudaFree(gpu_loss));
+    checkCudaErrors(cudaFree(gpu_processed_train));
+    checkCudaErrors(cudaFree(gpu_processed_test));
+    checkCudaErrors(cudaFree(gpu_processed_labels));
+
     return count0/test_size;
 }
 
