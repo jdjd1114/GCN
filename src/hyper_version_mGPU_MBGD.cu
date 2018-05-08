@@ -464,7 +464,8 @@ __global__ static void bp_convolution( int data_id,
                                        double * pre_deltaB, 
                                        double * deltaW, 
                                        double * deltaB, 
-                                       double * data )
+                                       double * data,
+                                       double * output )
 {
 	int tid = threadIdx.x;
 	int bid = blockIdx.x;
@@ -483,7 +484,7 @@ __global__ static void bp_convolution( int data_id,
 		double mid0 = 0, mid1 = 0;
 		for ( int i = 0; i < re_size; i++ ) {
             mid0 = mid0 + pre_deltaB[i + bid * re_size + batch_id * output_size] * data_tmp[tid + i * perLayerSize * stride];
-            mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * output_size];
+            mid1 = mid1 + pre_deltaB[i + bid * re_size + batch_id * output_size] * (1 - output[i + bid * re_size + batch_id * output_size]) * (1 + output[i + bid * re_size + batch_id * output_size]);
 		}
 
 		deltaW[tid + bid * filter_size + batch_id * filter_size * filter_num] = mid0 / re_size;
@@ -1084,7 +1085,8 @@ double training(double * data, double * labels, int x, int y, int z, int device_
                                                                            pooling[d].deltaW.data_d,
                                                                            conv[d].deltaW.data_d,
                                                                            conv[d].deltaB.data_d,
-                                                                           dataLayer[d].input.data_d );
+                                                                           dataLayer[d].input.data_d,
+                                                                           conv[d].output.data_d );
                 }
 			} //i1
 
